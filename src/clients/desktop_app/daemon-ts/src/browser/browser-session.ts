@@ -180,68 +180,87 @@ export class BrowserSession {
   private async _initializeFromPool(): Promise<void> {
     if (!this._context) return;
 
-    const allPages = this._context.pages();
-    let claimedPage: Page | null = null;
-    let viewId: string | null = null;
-
-    for (const page of allPages) {
-      try {
-        const url = page.url();
-        if (url.includes("ami=pool") && !page.isClosed() && !BrowserSession._claimedPages.has(page)) {
-          claimedPage = page;
-          // Extract viewId from URL (e.g. about:blank?ami=pool&viewId=3)
-          const match = url.match(/viewId=(\d+)/);
-          viewId = match ? match[1] : null;
-          break;
-        }
-      } catch {
-        // page may be closed
-      }
+    const page = await this._takeOnePoolPage();
+    if (page) {
+      await this._registerClaimedPage(page);
     }
+  }
 
-    if (claimedPage) {
-      BrowserSession._claimedPages.add(claimedPage);
+  /**
+   * Atomically find and claim ONE free pool page.
+   * Returns null if no pool pages are available (non-fatal for init).
+   * Only the scan + claim + goto("about:blank") need the lock.
+   */
+  private async _takeOnePoolPage(): Promise<Page | null> {
+    if (!this._context) return null;
 
-      // Navigate away from pool marker so other sessions won't re-claim it
-      await claimedPage.goto("about:blank");
+    await BrowserSession._poolClaimLock.acquire();
+    try {
+      for (const page of this._context.pages()) {
+        try {
+          const url = page.url();
+          if (url.includes("ami=pool") && !page.isClosed() && !BrowserSession._claimedPages.has(page)) {
+            BrowserSession._claimedPages.add(page);
 
-      // Set viewport size — CDP-connected pages don't inherit WebContentsView bounds
-      await claimedPage.setViewportSize({
+            const match = url.match(/viewId=(\d+)/);
+            if (match) this._pageToViewId.set(page, match[1]);
+
+            // Navigate away so other sessions won't re-claim it
+            await page.goto("about:blank");
+            return page;
+          }
+        } catch {
+          // skip closed pages
+        }
+      }
+      return null;
+    } finally {
+      BrowserSession._poolClaimLock.release();
+    }
+  }
+
+  /**
+   * Register a claimed pool page as this session's active page.
+   * Sets up viewport, snapshot, executor, and event listeners.
+   */
+  private async _registerClaimedPage(page: Page): Promise<void> {
+    // Set viewport size — CDP-connected pages don't inherit WebContentsView bounds.
+    // Must await: if fire-and-forget, a subsequent page.goto() races with this
+    // and causes ERR_ABORTED.
+    try {
+      await page.setViewportSize({
         width: BrowserConfig.viewportWidth,
         height: BrowserConfig.viewportHeight,
       });
-
-      if (viewId !== null) {
-        this._pageToViewId.set(claimedPage, viewId);
-      }
-
-      const tabId = nextTabId();
-      this._pages.set(tabId, claimedPage);
-      this._page = claimedPage;
-      this._currentTabId = tabId;
-      this.snapshot = new PageSnapshot(claimedPage);
-      this.executor = new ActionExecutor(claimedPage, this);
-
-      // Listen for popups
-      claimedPage.on("popup", (popup) => this._handleNewPage(popup).catch((e) =>
-        logger.warn({ err: e }, "Error handling popup"),
-      ));
-
-      // Crash handler — page crashes don't fire "close" event
-      claimedPage.on("crash", () => {
-        logger.error({ tabId, viewId }, "Page crashed — removing from registry");
-        this._pages.delete(tabId);
-        BrowserSession._claimedPages.delete(claimedPage);
-        if (this._currentTabId === tabId) {
-          this._currentTabId = null;
-          this._page = null;
-          this.snapshot = null;
-          this.executor = null;
-        }
-      });
-
-      logger.info({ tabId, viewId }, "Initial page claimed from pool");
+    } catch (e) {
+      logger.warn({ err: e }, "Failed to set viewport");
     }
+
+    const tabId = nextTabId();
+    this._pages.set(tabId, page);
+    this._page = page;
+    this._currentTabId = tabId;
+    this.snapshot = new PageSnapshot(page);
+    this.executor = new ActionExecutor(page, this);
+
+    page.on("popup", (popup) => this._handleNewPage(popup).catch((e) =>
+      logger.warn({ err: e }, "Error handling popup"),
+    ));
+
+    page.on("crash", () => {
+      logger.error({ tabId }, "Page crashed — removing from registry");
+      this._pages.delete(tabId);
+      BrowserSession._claimedPages.delete(page);
+      if (this._currentTabId === tabId) {
+        this._currentTabId = null;
+        this._page = null;
+        this.snapshot = null;
+        this.executor = null;
+      }
+    });
+
+    const viewId = this._pageToViewId.get(page);
+    logger.info({ tabId, viewId }, "Page claimed and registered");
   }
 
   private async _handleNewPage(page: Page): Promise<void> {
@@ -280,50 +299,12 @@ export class BrowserSession {
   // ===== Pool Management =====
 
   private async _claimPoolPage(): Promise<Page> {
-    if (!this._context) {
-      throw new Error("Browser context not available");
-    }
-
     const MAX_RETRIES = 3;
     const RETRY_DELAY_MS = 3000;
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      // Lock ensures only one session claims at a time, preventing
-      // concurrent goto("about:blank") on the same page.
-      await BrowserSession._poolClaimLock.acquire();
-      try {
-        const allPages = this._context.pages();
-        for (const page of allPages) {
-          try {
-            const url = page.url();
-            if (url.includes("ami=pool") && !page.isClosed() && !BrowserSession._claimedPages.has(page)) {
-              BrowserSession._claimedPages.add(page);
-
-              // Extract viewId before navigating away
-              const match = url.match(/viewId=(\d+)/);
-              if (match) {
-                this._pageToViewId.set(page, match[1]);
-              }
-
-              // Navigate away from pool marker so other sessions won't re-claim it
-              await page.goto("about:blank");
-
-              // Set viewport size — CDP-connected pages don't inherit WebContentsView bounds
-              await page.setViewportSize({
-                width: BrowserConfig.viewportWidth,
-                height: BrowserConfig.viewportHeight,
-              });
-
-              logger.debug({ attempt, viewId: match?.[1] }, "Claimed pool page");
-              return page;
-            }
-          } catch {
-            // skip closed pages
-          }
-        }
-      } finally {
-        BrowserSession._poolClaimLock.release();
-      }
+      const page = await this._takeOnePoolPage();
+      if (page) return page;
 
       if (attempt < MAX_RETRIES - 1) {
         logger.warn(
@@ -359,9 +340,13 @@ export class BrowserSession {
   async getPage(): Promise<Page> {
     await this.ensureBrowser();
     if (!this._page) {
-      throw new Error("No active page available");
+      // _initializeFromPool may have lost the race for a pool page.
+      // Claim one explicitly (with mutex + retry).
+      logger.info({ sessionId: this._sessionId }, "No page after init — claiming from pool");
+      const page = await this._claimPoolPage();
+      await this._registerClaimedPage(page);
     }
-    return this._page;
+    return this._page!;
   }
 
   // ===== Navigation =====
