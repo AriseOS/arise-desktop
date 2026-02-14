@@ -54,6 +54,7 @@ export default function EmbeddedBrowser({
     }
     boundsRef.current = bounds;
 
+    console.log(`[EmbeddedBrowser] showWebview(${viewId}) bounds=`, bounds);
     window.electronAPI?.showWebview(viewId, bounds);
   }, [viewId, visible]);
 
@@ -62,10 +63,12 @@ export default function EmbeddedBrowser({
     if (!viewId) return;
 
     if (visible) {
+      console.log(`[EmbeddedBrowser] visible=true viewId=${viewId}, scheduling updateBounds in 50ms`);
       // Small delay to let React layout settle before measuring
       const timer = setTimeout(updateBounds, 50);
       return () => clearTimeout(timer);
     } else {
+      console.log(`[EmbeddedBrowser] visible=false viewId=${viewId}, hiding`);
       window.electronAPI?.hideWebview(viewId);
       boundsRef.current = null;
     }

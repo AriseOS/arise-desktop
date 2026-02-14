@@ -203,10 +203,16 @@ export class BrowserSession {
             BrowserSession._claimedPages.add(page);
 
             const match = url.match(/viewId=(\d+)/);
-            if (match) this._pageToViewId.set(page, match[1]);
+            const viewId = match?.[1];
+            if (viewId) this._pageToViewId.set(page, viewId);
 
-            // Navigate away so other sessions won't re-claim it
-            await page.goto("about:blank");
+            // Navigate to claimed marker so:
+            // 1. Other sessions won't re-claim it (no "ami=pool" in URL)
+            // 2. Frontend tab bar won't show it as active (filters "ami=claimed")
+            const claimedUrl = viewId
+              ? `${BrowserConfig.claimedMarkerUrl}&viewId=${viewId}`
+              : BrowserConfig.claimedMarkerUrl;
+            await page.goto(claimedUrl);
             return page;
           }
         } catch {

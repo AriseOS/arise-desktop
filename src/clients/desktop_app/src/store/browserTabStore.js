@@ -8,6 +8,7 @@
 import { create } from 'zustand';
 
 const POOL_MARKER = 'about:blank?ami=pool';
+const CLAIMED_MARKER = 'about:blank?ami=claimed';
 
 const useBrowserTabStore = create((set, get) => ({
   // { [viewId]: { url, title, mode } }
@@ -44,6 +45,7 @@ const useBrowserTabStore = create((set, get) => ({
    * Handle view-state-changed event from Electron.
    */
   onViewStateChanged: (viewId, info) => {
+    console.log(`[browserTabStore] view-state-changed: viewId=${viewId} url=${info.url} title=${info.title}`);
     set((state) => ({
       views: {
         ...state.views,
@@ -80,6 +82,7 @@ const useBrowserTabStore = create((set, get) => ({
    */
   switchTab: (viewId) => {
     const prev = get().activeTabId;
+    console.log(`[browserTabStore] switchTab: ${prev} → ${viewId}`);
     if (prev && prev !== viewId) {
       window.electronAPI?.hideWebview(prev);
     }
@@ -146,8 +149,9 @@ const useBrowserTabStore = create((set, get) => ({
 
     for (const [id, view] of Object.entries(views)) {
       const isPool = !view.url || view.url.startsWith(POOL_MARKER);
-      // Always show view "7" (login slot) + any non-pool views
-      if (id === '7' || !isPool) {
+      const isClaimed = view.url && view.url.startsWith(CLAIMED_MARKER);
+      // Always show view "7" (login slot) + any non-pool/non-claimed views
+      if (id === '7' || (!isPool && !isClaimed)) {
         tabs.push({ id, ...view });
       }
     }

@@ -24,6 +24,7 @@ export const BrowserConfig = {
   // Pool
   poolSize: 16,
   poolMarkerUrl: "about:blank?ami=pool",
+  claimedMarkerUrl: "about:blank?ami=claimed",
 
   // Retry
   maxRetries: 3,

@@ -141,18 +141,51 @@ class WebViewManager {
       return { success: false, error: 'Invalid bounds: must have numeric x, y, width, height' };
     }
 
-    info.view.setBounds(bounds);
+    const prevBounds = info.view.getBounds();
     info.isShow = true;
 
-    // Disable throttling when visible
     if (!info.view.webContents.isDestroyed()) {
+      // Disable throttling BEFORE setBounds so Chromium processes the
+      // viewport resize immediately instead of deferring it.
       info.view.webContents.setBackgroundThrottling(false);
+    }
+
+    info.view.setBounds(bounds);
+
+    // Diagnostic logging
+    const winBounds = this.win && !this.win.isDestroyed() ? this.win.getContentBounds() : null;
+    const url = info.view.webContents.isDestroyed() ? '(destroyed)' : info.view.webContents.getURL();
+    console.log(`[WebViewManager] showView(${id})`,
+      `\n  requested: ${JSON.stringify(bounds)}`,
+      `\n  actual:    ${JSON.stringify(info.view.getBounds())}`,
+      `\n  previous:  ${JSON.stringify(prevBounds)}`,
+      `\n  winContent:${JSON.stringify(winBounds)}`,
+      `\n  url: ${url}`);
+
+    if (!info.view.webContents.isDestroyed()) {
+      // Force Chromium to repaint. Views that loaded content while off-screen
+      // with backgroundThrottling=true may not have a painted frame.
+      info.view.webContents.invalidate();
+
+      // When viewport dimensions change, force reflow so page re-layouts.
+      if (prevBounds.width !== bounds.width || prevBounds.height !== bounds.height) {
+        info.view.webContents.executeJavaScript(
+          'window.dispatchEvent(new Event("resize"))'
+        ).catch(() => {});
+      }
+
+      // Log page viewport for diagnostics
+      info.view.webContents.executeJavaScript(
+        'JSON.stringify({innerWidth: window.innerWidth, innerHeight: window.innerHeight, scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth})'
+      ).then(result => {
+        console.log(`[WebViewManager] showView(${id}) page viewport: ${result}`);
+      }).catch(() => {});
     }
 
     // Send current URL to renderer
     if (this.win && !this.win.isDestroyed()) {
-      const url = info.view.webContents.getURL();
-      this.win.webContents.send('url-updated', id, url);
+      const currentUrl = info.view.webContents.isDestroyed() ? '' : info.view.webContents.getURL();
+      this.win.webContents.send('url-updated', id, currentUrl);
     }
 
     return { success: true };
@@ -164,6 +197,9 @@ class WebViewManager {
   hideView(id) {
     const info = this.views.get(id);
     if (!info) return { success: false, error: `View ${id} not found` };
+
+    const url = info.view.webContents.isDestroyed() ? '(destroyed)' : info.view.webContents.getURL();
+    console.log(`[WebViewManager] hideView(${id}) url=${url}`);
 
     const idx = parseInt(id, 10) || 0;
     info.view.setBounds({

@@ -82,10 +82,12 @@ export default function BrowserPage({
   // Derive active tabs from views (memoized to avoid new array on every render)
   const activeTabs = useMemo(() => {
     const POOL_MARKER = 'about:blank?ami=pool';
+    const CLAIMED_MARKER = 'about:blank?ami=claimed';
     const tabs = [];
     for (const [id, view] of Object.entries(views)) {
       const isPool = !view.url || view.url.startsWith(POOL_MARKER);
-      if (id === '7' || !isPool) {
+      const isClaimed = view.url && view.url.startsWith(CLAIMED_MARKER);
+      if (id === '7' || (!isPool && !isClaimed)) {
         tabs.push({ id, ...view });
       }
     }
