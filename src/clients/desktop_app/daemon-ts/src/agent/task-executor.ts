@@ -35,6 +35,12 @@ import { agentPrompt, requireApiKey } from "../utils/agent-helpers.js";
 import { createLogger } from "../utils/logging.js";
 import { BehaviorRecorder } from "../browser/behavior-recorder.js";
 import { BrowserSession } from "../browser/browser-session.js";
+import {
+  updateSubtaskState as persistSubtaskState,
+  updateTaskStatus as persistTaskStatus,
+  buildSnapshot,
+  saveTaskState,
+} from "../services/task-state-persistence.js";
 
 const logger = createLogger("task-executor");
 
@@ -171,7 +177,8 @@ export class AMITaskExecutor implements TaskExecutorLike {
     );
 
     const collector = new ExecutionDataCollector();
-    let completed = 0;
+    // Count subtasks that are already DONE (e.g., from resume)
+    let completed = this._subtasks.filter((s) => s.state === SubtaskState.DONE).length;
     let failed = 0;
     const emittedFailures = new Set<string>();
 
@@ -231,6 +238,14 @@ export class AMITaskExecutor implements TaskExecutorLike {
     };
 
     logger.info(result, "Execution finished");
+
+    // Persist final task status (fire-and-forget)
+    try {
+      const finalStatus = this._stopped ? "failed" as const
+        : failed > 0 ? "failed" as const
+        : "completed" as const;
+      persistTaskStatus(this.taskId, finalStatus);
+    } catch { /* fire-and-forget */ }
 
     // Post-execution learning: fire-and-forget
     if (this.shouldTriggerLearning()) {
@@ -580,6 +595,17 @@ No historical workflow guide available. Please explore and complete the task usi
     this._subtasks = [...kept, ...newSubtasks];
     this.subtaskMap = new Map(this._subtasks.map((s) => [s.id, s]));
 
+    // Re-persist entire snapshot after replan (incremental updates would miss new subtasks)
+    try {
+      const snapshot = buildSnapshot(
+        this.taskId,
+        this.userRequest,
+        this._subtasks,
+        "running",
+      );
+      saveTaskState(this.taskId, snapshot);
+    } catch { /* fire-and-forget */ }
+
     return {
       removedCount,
       addedCount: newSubtasks.length,
@@ -621,6 +647,17 @@ No historical workflow guide available. Please explore and complete the task usi
       { afterSubtaskId, newIds },
       "Dynamically added subtasks",
     );
+
+    // Re-persist entire snapshot (new subtasks not in persisted version)
+    try {
+      const snapshot = buildSnapshot(
+        this.taskId,
+        this.userRequest,
+        this._subtasks,
+        "running",
+      );
+      saveTaskState(this.taskId, snapshot);
+    } catch { /* fire-and-forget */ }
 
     // Emit SSE
     if (this.emitter) {
@@ -667,6 +704,17 @@ No historical workflow guide available. Please explore and complete the task usi
   }
 
   private emitSubtaskState(subtask: AMISubtask): void {
+    // Persist to disk (fire-and-forget)
+    try {
+      persistSubtaskState(
+        this.taskId,
+        subtask.id,
+        subtask.state,
+        subtask.result,
+        subtask.error,
+      );
+    } catch { /* fire-and-forget */ }
+
     this.emitter?.emitSubtaskState(
       subtask.id,
       subtask.state,

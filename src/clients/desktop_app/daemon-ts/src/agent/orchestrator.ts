@@ -39,6 +39,13 @@ import type { SSEEmitter } from "../events/emitter.js";
 import type { TaskState } from "../services/task-state.js";
 import { t, detectLanguage } from "../utils/i18n.js";
 import { createLogger } from "../utils/logging.js";
+import {
+  loadTaskState,
+  listResumableTasks,
+  saveTaskState,
+  buildSnapshot,
+} from "../services/task-state-persistence.js";
+import type { TaskStateSnapshot } from "./schemas.js";
 
 const logger = createLogger("orchestrator");
 
@@ -59,6 +66,13 @@ function createDecomposeTaskTool(ctx: OrchestratorContext): AgentTool<any> {
           'Short kebab-case folder name for output files (e.g. "stock-analysis").',
       }),
     ),
+    resume_task_id: Type.Optional(
+      Type.String({
+        description:
+          "Task ID from resume_task to resume a previously interrupted task. " +
+          "If provided, skip planning and directly execute subtasks from the saved snapshot, filtering out DONE ones.",
+      }),
+    ),
   });
 
   return {
@@ -66,7 +80,8 @@ function createDecomposeTaskTool(ctx: OrchestratorContext): AgentTool<any> {
     label: "Delegate Task",
     description:
       "Delegate a task to specialized agents (Browser, Developer, Document, etc.). " +
-      "Call this when the task requires browsing websites, writing code, or creating documents.",
+      "Call this when the task requires browsing websites, writing code, or creating documents. " +
+      "Pass resume_task_id (from resume_task) to resume a previously interrupted task without re-planning.",
     parameters: schema,
     execute: async (
       _toolCallId: string,
@@ -89,11 +104,13 @@ function createDecomposeTaskTool(ctx: OrchestratorContext): AgentTool<any> {
       ctx.decomposePending = true;
       ctx.decomposeTaskDescription = params.task_description;
       ctx.decomposeWorkspaceFolder = params.workspace_folder ?? "";
+      ctx.resumeTaskId = params.resume_task_id;
 
       logger.info(
         {
           task: params.task_description?.slice(0, 100),
           folder: ctx.decomposeWorkspaceFolder,
+          resumeTaskId: params.resume_task_id,
         },
         "decompose_task triggered",
       );
@@ -102,9 +119,11 @@ function createDecomposeTaskTool(ctx: OrchestratorContext): AgentTool<any> {
         content: [
           {
             type: "text",
-            text:
-              "Task delegated successfully. The team will now execute this task. " +
-              "Summarize what you plan to do for the user.",
+            text: params.resume_task_id
+              ? "Resuming task from previous snapshot. The team will continue execution. " +
+                "Summarize the resume plan to the user."
+              : "Task delegated successfully. The team will now execute this task. " +
+                "Summarize what you plan to do for the user.",
           },
         ],
         details: undefined,
@@ -339,6 +358,105 @@ function createReplanTaskTool(ctx: OrchestratorContext): AgentTool<any> {
   };
 }
 
+function createResumeTaskTool(): AgentTool<any> {
+  const schema = Type.Object({
+    task_id: Type.Optional(
+      Type.String({
+        description:
+          "ID of the task to resume. If omitted, the most recently interrupted task is used.",
+      }),
+    ),
+  });
+
+  return {
+    name: "resume_task",
+    label: "Resume Task",
+    description:
+      "Load a previously interrupted task's snapshot so execution can be resumed. " +
+      "Call this when the user asks to continue or resume a previous task.",
+    parameters: schema,
+    execute: async (
+      _toolCallId: string,
+      params: any,
+    ): Promise<AgentToolResult<undefined>> => {
+      let snapshot: TaskStateSnapshot | null = null;
+
+      if (params.task_id) {
+        snapshot = loadTaskState(params.task_id);
+        if (!snapshot) {
+          return {
+            content: [
+              { type: "text", text: `No task state found for task_id '${params.task_id}'.` },
+            ],
+            details: undefined,
+          };
+        }
+      } else {
+        const resumable = listResumableTasks();
+        if (resumable.length === 0) {
+          return {
+            content: [
+              { type: "text", text: "No resumable tasks found. All previous tasks are either completed or have no saved state." },
+            ],
+            details: undefined,
+          };
+        }
+        snapshot = resumable[0];
+      }
+
+      if (snapshot.status === "completed") {
+        return {
+          content: [
+            { type: "text", text: `Task '${snapshot.taskId}' is already completed. No need to resume.` },
+          ],
+          details: undefined,
+        };
+      }
+
+      // Format snapshot as markdown for orchestrator to decide next steps
+      const doneCount = snapshot.subtasks.filter((s) => s.state === "DONE").length;
+      const failedCount = snapshot.subtasks.filter((s) => s.state === "FAILED").length;
+      const pendingCount = snapshot.subtasks.filter((s) => s.state === "PENDING" || s.state === "RUNNING").length;
+
+      const subtaskLines = snapshot.subtasks.map((s) => {
+        const stateTag = s.state === "DONE" ? "DONE" : s.state === "FAILED" ? "FAILED" : "PENDING";
+        let line = `${s.id}. [${stateTag}] (${s.agentType}) ${s.content.slice(0, 80)}`;
+        if (s.state === "DONE" && s.result) {
+          line += ` → "${s.result.slice(0, 100)}${s.result.length > 100 ? "..." : ""}"`;
+        }
+        if (s.state === "FAILED" && s.error) {
+          line += ` → Error: "${s.error.slice(0, 100)}"`;
+        }
+        return line;
+      });
+
+      const markdown = [
+        "## Resumable Task Found",
+        "",
+        `**Task ID**: ${snapshot.taskId}`,
+        `**Request**: ${snapshot.userRequest}`,
+        `**Status**: ${snapshot.status} (${doneCount} done, ${failedCount} failed, ${pendingCount} pending)`,
+        `**Last Updated**: ${snapshot.updatedAt}`,
+        "",
+        "### Subtasks:",
+        ...subtaskLines,
+        "",
+        "### Resume Instructions",
+        "To resume this task, call `decompose_task` with these parameters:",
+        `- task_description: ${snapshot.userRequest}`,
+        `- resume_task_id: ${snapshot.taskId}`,
+        "",
+        "The executor will skip DONE subtasks and re-run FAILED/PENDING ones.",
+      ].join("\n");
+
+      return {
+        content: [{ type: "text", text: markdown }],
+        details: undefined,
+      };
+    },
+  };
+}
+
 function createAskHumanTool(ctx: OrchestratorContext): AgentTool<any> {
   const schema = Type.Object({
     question: Type.String({ description: "Question to ask the user" }),
@@ -416,6 +534,7 @@ interface OrchestratorContext {
   decomposePending: boolean;
   decomposeTaskDescription: string;
   decomposeWorkspaceFolder: string;
+  resumeTaskId?: string;
   attachedFiles: string[];
 }
 
@@ -502,6 +621,7 @@ export class OrchestratorSession {
       this.ctx.decomposePending = false;
       this.ctx.decomposeTaskDescription = "";
       this.ctx.decomposeWorkspaceFolder = "";
+      this.ctx.resumeTaskId = undefined;
       this.ctx.attachedFiles = [];
 
       // 5. Create or update agent
@@ -596,10 +716,11 @@ export class OrchestratorSession {
           question: this.ctx.decomposeTaskDescription,
         });
 
-        // Spawn background plan+execute
+        // Spawn background plan+execute (or resume)
         await this.supervisedExecute(
           this.ctx.decomposeTaskDescription,
           this.ctx.decomposeWorkspaceFolder,
+          this.ctx.resumeTaskId,
         );
       } else if (reply) {
         // Normal reply
@@ -685,6 +806,7 @@ export class OrchestratorSession {
       createAskHumanTool(this.ctx),
       createAttachFileTool(this.ctx),
       createDecomposeTaskTool(this.ctx),
+      createResumeTaskTool(),
       createInjectMessageTool(this.ctx),
       createCancelTaskTool(this.ctx),
       createReplanTaskTool(this.ctx),
@@ -717,6 +839,7 @@ export class OrchestratorSession {
   private async supervisedExecute(
     taskDescription: string,
     workspaceFolder: string,
+    resumeTaskId?: string,
   ): Promise<void> {
     this.executorCounter++;
     const executorId = `exec_${this.executorCounter}`;
@@ -730,6 +853,7 @@ export class OrchestratorSession {
         workspaceFolder,
         executorId,
         taskLabel,
+        resumeTaskId,
       ),
     );
 
@@ -756,18 +880,43 @@ export class OrchestratorSession {
     workspaceFolder: string,
     executorId: string,
     taskLabel: string,
+    resumeTaskId?: string,
   ): Promise<ExecutionResult> {
-    // Phase 1: Planning
-    const planner = new AMITaskPlanner({
-      taskId: this.taskId,
-      emitter: this.emitter,
-      apiKey: this.apiKey,
-      userId: this.taskState.userId,
-      memoryApiBaseUrl: getConfig().cloud.api_url,
-    });
+    let subtasks: AMISubtask[];
 
-    logger.info({ executorId }, "Decomposing task...");
-    const subtasks = await planner.decomposeAndQueryMemory(taskDescription);
+    if (resumeTaskId) {
+      // Resume path: load snapshot from disk and reconstruct subtasks
+      const snapshot = loadTaskState(resumeTaskId);
+      if (!snapshot) {
+        throw new Error(`Cannot resume: no saved state for task '${resumeTaskId}'`);
+      }
+      subtasks = this.buildResumeSubtasks(snapshot.subtasks);
+
+      // Mark the OLD snapshot as completed so it no longer appears in listResumableTasks.
+      // The new execution will be tracked under this.taskId.
+      try {
+        snapshot.status = "completed";
+        snapshot.updatedAt = new Date().toISOString();
+        saveTaskState(resumeTaskId, snapshot);
+      } catch { /* fire-and-forget */ }
+
+      logger.info(
+        { executorId, resumeTaskId, resumeCount: subtasks.length },
+        "Resuming from snapshot (skipping DONE subtasks)",
+      );
+    } else {
+      // Normal path: plan from scratch
+      const planner = new AMITaskPlanner({
+        taskId: this.taskId,
+        emitter: this.emitter,
+        apiKey: this.apiKey,
+        userId: this.taskState.userId,
+        memoryApiBaseUrl: getConfig().cloud.api_url,
+      });
+
+      logger.info({ executorId }, "Decomposing task...");
+      subtasks = await planner.decomposeAndQueryMemory(taskDescription);
+    }
 
     if (subtasks.length === 0) {
       this.emitter.emitNotice(
@@ -783,6 +932,17 @@ export class OrchestratorSession {
     if (handle) {
       handle.subtasks = subtasks;
     }
+
+    // Persist initial task state snapshot
+    try {
+      const snapshot = buildSnapshot(
+        this.taskId,
+        taskDescription,
+        subtasks,
+        "running",
+      );
+      saveTaskState(this.taskId, snapshot);
+    } catch { /* fire-and-forget */ }
 
     // Emit TaskDecomposed
     const subtasksData = subtasks.map((st) => ({
@@ -1040,6 +1200,32 @@ export class OrchestratorSession {
     }
 
     return lines.join("\n");
+  }
+
+  // ===== Resume Support =====
+
+  /**
+   * Reconstruct AMISubtask[] from persisted subtask snapshots.
+   * DONE subtasks are preserved as-is (executor skips them since they're not PENDING).
+   * FAILED and RUNNING subtasks are reset to PENDING for re-execution.
+   */
+  private buildResumeSubtasks(snapshots: import("./schemas.js").SubtaskSnapshot[]): AMISubtask[] {
+    return snapshots.map((s) => {
+      const st = createSubtask({
+        id: s.id,
+        content: s.content,
+        agentType: s.agentType,
+        dependsOn: s.dependsOn,
+        workflowGuide: s.workflowGuide,
+        memoryLevel: s.memoryLevel,
+      });
+      // Preserve DONE subtasks with their results; reset everything else to PENDING
+      if (s.state === "DONE") {
+        st.state = SubtaskState.DONE;
+        st.result = s.result;
+      }
+      return st;
+    });
   }
 
   // ===== Helpers =====

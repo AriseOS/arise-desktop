@@ -144,3 +144,27 @@ export interface TaskExecutionData {
   failedCount: number;
   totalCount: number;
 }
+
+// ===== Task State Snapshot (for persistence & resume) =====
+
+export interface SubtaskSnapshot {
+  id: string;
+  content: string;
+  agentType: string;
+  dependsOn: string[];
+  workflowGuide?: string;
+  memoryLevel: string;
+  state: string;
+  result?: string;
+  error?: string;
+}
+
+export interface TaskStateSnapshot {
+  taskId: string;
+  userRequest: string;
+  status: "running" | "completed" | "failed";
+  memoryPlan?: Record<string, unknown>;
+  subtasks: SubtaskSnapshot[];
+  createdAt: string;
+  updatedAt: string;
+}
