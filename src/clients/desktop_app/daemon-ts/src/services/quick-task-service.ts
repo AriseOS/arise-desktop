@@ -63,9 +63,9 @@ export async function executeTaskPipeline(
     emitter,
     taskState: state,
     workspaceDir: workingDir,
-    childAgentToolsFactory: (agentType, sessionId) =>
+    childAgentToolsFactory: (agentType, sessionId, workingDirOverride) =>
       createChildAgentTools(agentType, sessionId, {
-        workingDir,
+        workingDir: workingDirOverride ?? workingDir,
         taskId,
         taskState: state,
         apiKey,

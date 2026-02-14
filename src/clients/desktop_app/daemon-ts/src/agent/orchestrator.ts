@@ -152,6 +152,18 @@ function createAttachFileTool(ctx: OrchestratorContext): AgentTool<any> {
       _toolCallId: string,
       params: any,
     ): Promise<AgentToolResult<undefined>> => {
+      const { existsSync } = await import("node:fs");
+      if (!existsSync(params.file_path)) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error: file does not exist: ${params.file_path}`,
+            },
+          ],
+          details: undefined,
+        };
+      }
       ctx.attachedFiles.push(params.file_path);
       return {
         content: [
@@ -540,6 +552,7 @@ export class OrchestratorSession {
   private childAgentToolsFactory?: (
     agentType: AgentType,
     sessionId: string,
+    workingDirOverride?: string,
   ) => AgentTool<any>[];
 
   constructor(opts: {
@@ -551,6 +564,7 @@ export class OrchestratorSession {
     childAgentToolsFactory?: (
       agentType: AgentType,
       sessionId: string,
+      workingDirOverride?: string,
     ) => AgentTool<any>[];
   }) {
     this.taskId = opts.taskId;
@@ -1011,6 +1025,7 @@ export class OrchestratorSession {
           this.childAgentToolsFactory(
             agentType as AgentType,
             this.taskId,
+            workspaceFolder,
           ),
         );
       } else {
@@ -1042,7 +1057,7 @@ export class OrchestratorSession {
       workspaceDir: workspaceFolder,
       childAgentToolsFactory: this.childAgentToolsFactory
         ? (agentType: string, sessionId: string) =>
-            this.childAgentToolsFactory!(agentType as AgentType, sessionId)
+            this.childAgentToolsFactory!(agentType as AgentType, sessionId, workspaceFolder)
         : undefined,
     });
 

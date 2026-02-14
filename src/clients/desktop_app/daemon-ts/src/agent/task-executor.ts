@@ -91,7 +91,7 @@ export class AMITaskExecutor implements TaskExecutorLike {
   private agentTools: Map<string, AgentTool<any>[]>;
   private systemPrompts: Map<string, string>;
   private workspaceDir: string;
-  private childAgentToolsFactory?: (agentType: string, sessionId: string) => AgentTool<any>[];
+  private childAgentToolsFactory?: (agentType: string, sessionId: string, workingDirOverride?: string) => AgentTool<any>[];
 
   // Subtask management
   private _subtasks: AMISubtask[] = [];
@@ -125,7 +125,7 @@ export class AMITaskExecutor implements TaskExecutorLike {
     taskLabel?: string;
     userId?: string;
     workspaceDir?: string;
-    childAgentToolsFactory?: (agentType: string, sessionId: string) => AgentTool<any>[];
+    childAgentToolsFactory?: (agentType: string, sessionId: string, workingDirOverride?: string) => AgentTool<any>[];
   }) {
     this.taskId = opts.taskId;
     this.emitter = opts.emitter;
@@ -447,7 +447,7 @@ export class AMITaskExecutor implements TaskExecutorLike {
 
     if (this.childAgentToolsFactory && subtask.agentType === "browser") {
       borrowedSessionId = this._borrowSessionId();
-      tools = this.childAgentToolsFactory(subtask.agentType, borrowedSessionId);
+      tools = this.childAgentToolsFactory(subtask.agentType, borrowedSessionId, this.workspaceDir || undefined);
       logger.info(
         { subtaskId: subtask.id, sessionId: borrowedSessionId },
         "Borrowed session for browser subtask",
