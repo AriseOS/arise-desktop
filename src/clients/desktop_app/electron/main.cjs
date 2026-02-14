@@ -369,6 +369,23 @@ app.whenReady().then(async () => {
     win.show();
   });
 
+  // Prevent main window from navigating away (e.g. clicking an external link)
+  // Open external URLs in the system browser instead.
+  const appOrigins = new Set(['http://localhost:1420', 'file://']);
+  win.webContents.on('will-navigate', (event, url) => {
+    const isInternal = [...appOrigins].some(o => url.startsWith(o));
+    if (!isInternal) {
+      event.preventDefault();
+      shell.openExternal(url);
+    }
+  });
+
+  // Also handle window.open() calls — open in system browser
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
   // DevTools: only when explicitly requested via AMI_DEBUG=1
   if (process.env.AMI_DEBUG) {
     win.webContents.openDevTools({ mode: 'detach' });
