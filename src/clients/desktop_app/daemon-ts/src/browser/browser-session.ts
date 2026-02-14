@@ -19,6 +19,27 @@ import { createLogger } from "../utils/logging.js";
 
 const logger = createLogger("browser-session");
 
+// ===== Async Mutex =====
+
+class Mutex {
+  private _queue: (() => void)[] = [];
+  private _locked = false;
+
+  async acquire(): Promise<void> {
+    if (!this._locked) {
+      this._locked = true;
+      return;
+    }
+    await new Promise<void>((resolve) => this._queue.push(resolve));
+  }
+
+  release(): void {
+    const next = this._queue.shift();
+    if (next) next();
+    else this._locked = false;
+  }
+}
+
 // ===== Tab Group =====
 
 const TAB_GROUP_COLORS = ["blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange"];
@@ -59,6 +80,11 @@ export class BrowserSession {
 
   // Track all claimed pool pages across all sessions to prevent double-allocation
   private static _claimedPages = new WeakSet<Page>();
+
+  // Mutex for pool page claiming — ensures only one session claims at a time
+  // (matches Python _pool_claim_lock). Without this, concurrent _claimPoolPage()
+  // calls cause "Navigation to about:blank is interrupted by another navigation".
+  private static _poolClaimLock = new Mutex();
 
   // Tab Groups
   private _tabGroups = new Map<string, TabGroup>();
@@ -201,6 +227,19 @@ export class BrowserSession {
         logger.warn({ err: e }, "Error handling popup"),
       ));
 
+      // Crash handler — page crashes don't fire "close" event
+      claimedPage.on("crash", () => {
+        logger.error({ tabId, viewId }, "Page crashed — removing from registry");
+        this._pages.delete(tabId);
+        BrowserSession._claimedPages.delete(claimedPage);
+        if (this._currentTabId === tabId) {
+          this._currentTabId = null;
+          this._page = null;
+          this.snapshot = null;
+          this.executor = null;
+        }
+      });
+
       logger.info({ tabId, viewId }, "Initial page claimed from pool");
     }
   }
@@ -209,7 +248,7 @@ export class BrowserSession {
     const tabId = nextTabId();
     this._pages.set(tabId, page);
 
-    page.on("close", () => {
+    const cleanupOnGone = () => {
       this._pages.delete(tabId);
       if (this._currentTabId === tabId) {
         // Switch to another tab
@@ -227,6 +266,12 @@ export class BrowserSession {
           this.executor = null;
         }
       }
+    };
+
+    page.on("close", cleanupOnGone);
+    page.on("crash", () => {
+      logger.error({ tabId }, "Auto-registered page crashed — removing from registry");
+      cleanupOnGone();
     });
 
     logger.info({ tabId, url: page.url() }, "New page auto-registered");
@@ -243,34 +288,41 @@ export class BrowserSession {
     const RETRY_DELAY_MS = 3000;
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      const allPages = this._context.pages();
-      for (const page of allPages) {
-        try {
-          const url = page.url();
-          if (url.includes("ami=pool") && !page.isClosed() && !BrowserSession._claimedPages.has(page)) {
-            BrowserSession._claimedPages.add(page);
+      // Lock ensures only one session claims at a time, preventing
+      // concurrent goto("about:blank") on the same page.
+      await BrowserSession._poolClaimLock.acquire();
+      try {
+        const allPages = this._context.pages();
+        for (const page of allPages) {
+          try {
+            const url = page.url();
+            if (url.includes("ami=pool") && !page.isClosed() && !BrowserSession._claimedPages.has(page)) {
+              BrowserSession._claimedPages.add(page);
 
-            // Extract viewId before navigating away
-            const match = url.match(/viewId=(\d+)/);
-            if (match) {
-              this._pageToViewId.set(page, match[1]);
+              // Extract viewId before navigating away
+              const match = url.match(/viewId=(\d+)/);
+              if (match) {
+                this._pageToViewId.set(page, match[1]);
+              }
+
+              // Navigate away from pool marker so other sessions won't re-claim it
+              await page.goto("about:blank");
+
+              // Set viewport size — CDP-connected pages don't inherit WebContentsView bounds
+              await page.setViewportSize({
+                width: BrowserConfig.viewportWidth,
+                height: BrowserConfig.viewportHeight,
+              });
+
+              logger.debug({ attempt, viewId: match?.[1] }, "Claimed pool page");
+              return page;
             }
-
-            // Navigate away from pool marker so other sessions won't re-claim it
-            await page.goto("about:blank");
-
-            // Set viewport size — CDP-connected pages don't inherit WebContentsView bounds
-            await page.setViewportSize({
-              width: BrowserConfig.viewportWidth,
-              height: BrowserConfig.viewportHeight,
-            });
-
-            logger.debug({ attempt, viewId: match?.[1] }, "Claimed pool page");
-            return page;
+          } catch {
+            // skip closed pages
           }
-        } catch {
-          // skip closed pages
         }
+      } finally {
+        BrowserSession._poolClaimLock.release();
       }
 
       if (attempt < MAX_RETRIES - 1) {
@@ -444,6 +496,18 @@ export class BrowserSession {
       this._pages.delete(tabId);
     });
 
+    page.on("crash", () => {
+      logger.error({ tabId }, "Page crashed in tab — removing from registry");
+      this._pages.delete(tabId);
+      BrowserSession._claimedPages.delete(page);
+      if (this._currentTabId === tabId) {
+        this._currentTabId = null;
+        this._page = null;
+        this.snapshot = null;
+        this.executor = null;
+      }
+    });
+
     page.on("popup", (popup) => this._handleNewPage(popup).catch((e) =>
       logger.warn({ err: e }, "Error handling popup"),
     ));
@@ -499,6 +563,19 @@ export class BrowserSession {
     page.on("close", () => {
       this._pages.delete(tabId);
       group!.tabs.delete(tabId);
+    });
+
+    page.on("crash", () => {
+      logger.error({ tabId, taskId }, "Page crashed in group tab — removing from registry");
+      this._pages.delete(tabId);
+      group!.tabs.delete(tabId);
+      BrowserSession._claimedPages.delete(page);
+      if (this._currentTabId === tabId) {
+        this._currentTabId = null;
+        this._page = null;
+        this.snapshot = null;
+        this.executor = null;
+      }
     });
 
     page.on("popup", (popup) => this._handleNewPage(popup).catch((e) =>

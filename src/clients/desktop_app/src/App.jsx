@@ -134,6 +134,11 @@ function App() {
 
   // Navigation helper
   const navigate = (page, params = {}) => {
+    // Hide all webviews when leaving BrowserPage — native WebContentsView
+    // sits above all DOM elements and would cover the new page otherwise
+    if (currentPage === "browser" && page !== "browser") {
+      window.electronAPI?.hideAllWebviews();
+    }
     setCurrentPage(page);
     setPageParams(params);
   };

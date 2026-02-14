@@ -266,7 +266,7 @@ export default function BrowserPage({
           const label = tab.mode === 'login'
             ? 'Login'
             : tab.title || getDomain(tab.url) || `Tab ${tab.id}`;
-          const canClose = tab.id !== '7';
+          const canClose = tab.id !== '7' && tab.mode !== 'control';
           const showSep = index > 0 && !isActive && !prevActive;
 
           return (

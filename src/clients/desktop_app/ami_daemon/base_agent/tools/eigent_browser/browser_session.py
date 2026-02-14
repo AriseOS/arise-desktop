@@ -342,6 +342,14 @@ class HybridBrowserSession:
 
         new_page.on(event="close", f=handle_page_close)
 
+        def handle_page_crash(page: "Page"):
+            # Page crash does NOT trigger the "close" event — clean up explicitly
+            self._pages.pop(tab_id, None)
+            self._console_logs.pop(tab_id, None)
+            logger.error(f"Tab {tab_id} crashed and removed from registry. Remaining tabs: {len(self._pages)}")
+
+        new_page.on(event="crash", f=handle_page_crash)
+
     def _on_new_page(self, page: "Page") -> None:
         """Callback for context 'page' event - auto-register new tabs/popups.
 
@@ -1262,6 +1270,13 @@ class HybridBrowserSession:
             logger.debug(f"Tab {tab_id} closed and removed from registry. Remaining tabs: {len(self._pages)}")
 
         page.on("close", handle_page_close)
+
+        def handle_page_crash(crashed_page: "Page"):
+            self._pages.pop(tab_id, None)
+            self._console_logs.pop(tab_id, None)
+            logger.error(f"Tab {tab_id} crashed in group {group.title} — removed from registry. Remaining tabs: {len(self._pages)}")
+
+        page.on("crash", handle_page_crash)
 
         logger.info(f"Created tab {tab_id} in group {group.title}")
 
