@@ -1,0 +1,88 @@
+# App Version
+app:
+  version: "0.2.3"
+
+# Daemon HTTP Server Configuration
+daemon:
+  host: 127.0.0.1
+  port: 8765
+
+# Storage Configuration
+# IMPORTANT: App Backend uses ~/.ami (local client data)
+# Cloud Backend uses ~/ami-server (server-side data)
+storage:
+  base_path: auto  # Auto-detects to ~/.ami for local storage
+
+data:
+  browser_data: ${storage.base_path}/browser_data
+  scripts: ${storage.base_path}
+  databases:
+    kv: ${storage.base_path}/databases/kv.db
+    storage: ${storage.base_path}/databases/storage.db
+
+# CAMEL Framework Configuration
+camel:
+  # Working directory for CAMEL context files
+  # Prevents context files from being written in src-tauri/ which triggers Tauri rebuild
+  workdir: ${storage.base_path}/camel
+
+browser:
+  headless: false
+  timeout: 30
+  # user_data_dir is NOT configured here - it comes from DirectoryManager
+  # per user: ~/.ami/users/{user_id}/browser_data/
+
+# LLM Provider Configuration
+# All LLM calls go through Claude Relay Service (CRS)
+llm:
+  provider: anthropic  # openai or anthropic
+  # model: claude-sonnet-4-5-20250929 # Model name
+  model: Kimi
+  # Use CRS (Claude Relay Service) for all LLM calls
+  # Migration: Changed from old API Proxy to CRS
+  use_proxy: true
+  proxy_url: https://api.ariseos.com/api  # CRS production URL with /api prefix
+
+# Embedding Service Configuration
+# Used for semantic search in Personal Memory
+# Note: API key is provided per-request via user's cr_xxx key
+embedding:
+  provider: openai  # OpenAI-compatible API format
+  model: BAAI/bge-m3
+  dimension: 1024
+  base_url: https://api.ariseos.com/openai/v1  # CRS OpenAI-compatible endpoint
+
+# Personal Memory Configuration
+# Local graph database for storing user's operation knowledge
+memory:
+  # SurrealDB connection options:
+  #   - "surrealkv://path" (local embedded, persistent, recommended)
+  #   - "file://path" (local embedded, persistent)
+  #   - "memory://" (in-memory, non-persistent)
+  #   - "ws://host:port" (server mode, for debugging)
+  # Note: rocksdb:// is NOT supported in Python SDK 1.0.8
+  url: file://${storage.base_path}/memory.db
+  # SurrealDB namespace and database
+  namespace: ami
+  database: personal
+
+cloud:
+  # api_url: http://127.0.0.1:9000  # Local Cloud Backend for development
+  api_url: https://i.ariseos.com  # Production Cloud Backend
+  timeout: 120
+  # Proxy: Only reads from environment variables (HTTPS_PROXY, HTTP_PROXY, ALL_PROXY)
+  # System proxy settings (e.g., Clash modifying macOS preferences) are ignored
+
+logging:
+  level: DEBUG
+  # Log directory (app.log and error.log will be created here)
+  dir: ${storage.base_path}/logs
+  # Rotation settings
+  max_bytes: 10485760  # 10 MB per file
+  backup_count: 5      # Keep 5 backup files
+
+cors:
+  allow_origins:
+    - chrome-extension://*
+    - http://localhost:*
+  allow_credentials: true
