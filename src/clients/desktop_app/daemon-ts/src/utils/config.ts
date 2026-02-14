@@ -54,7 +54,7 @@ const DEFAULT_CONFIG: AppConfig = {
     host: "0.0.0.0",
   },
   cloud: {
-    api_url: "https://api.ami.app",
+    api_url: "https://i.ariseos.com",
   },
   llm: {
     model: "claude-sonnet-4-5-20250929",

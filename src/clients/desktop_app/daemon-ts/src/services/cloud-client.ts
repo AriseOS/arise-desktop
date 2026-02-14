@@ -157,7 +157,7 @@ export class CloudClient {
   }
 
   async publishPhrase(phraseId: string, creds?: RequestCredentials): Promise<unknown> {
-    return this.post("/api/v1/memory/publish", { phrase_id: phraseId }, creds);
+    return this.post("/api/v1/memory/share", { phrase_id: phraseId }, creds);
   }
 
   async unpublishPhrase(phraseId: string, creds?: RequestCredentials): Promise<unknown> {
