@@ -30,7 +30,7 @@ const logger = createLogger("server");
 
 // ===== Constants =====
 
-const APP_VERSION = "0.1.0";
+const APP_VERSION = "0.3.0";
 const DAEMON_MAGIC = `ami-daemon-${APP_VERSION}`;
 const AMI_DIR = join(homedir(), ".ami");
 const PORT_FILE = join(AMI_DIR, "daemon.port");
