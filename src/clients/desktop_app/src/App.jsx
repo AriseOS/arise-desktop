@@ -135,9 +135,16 @@ function App() {
   // Navigation helper
   const navigate = (page, params = {}) => {
     // Hide all webviews when leaving BrowserPage — native WebContentsView
-    // sits above all DOM elements and would cover the new page otherwise
+    // sits above all DOM elements and would cover the new page otherwise.
+    // We must also set _webviewsGloballyHidden SYNCHRONOUSLY so that any
+    // pending rAF/timer callbacks in EmbeddedBrowser will see it and skip
+    // their showWebview() call — React cleanup hasn't run yet at this point.
     if (currentPage === "browser" && page !== "browser") {
+      window.__amiWebviewsHidden = true;
       window.electronAPI?.hideAllWebviews();
+    }
+    if (page === "browser") {
+      window.__amiWebviewsHidden = false;
     }
     setCurrentPage(page);
     setPageParams(params);

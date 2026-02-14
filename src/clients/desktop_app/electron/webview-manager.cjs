@@ -41,13 +41,15 @@ class WebViewManager {
     // Mute audio
     view.webContents.audioMuted = true;
 
-    // Position off-screen with realistic dimensions
+    // Position off-screen with small dimensions. Chromium's layout viewport
+    // follows setBounds(), so small initial bounds prevent content from being
+    // rendered at a large viewport width while off-screen.
     const idx = parseInt(id, 10) || 0;
     view.setBounds({
       x: -9999 + idx * 100,
       y: -9999 + idx * 100,
-      width: 1920,
-      height: 1080,
+      width: 100,
+      height: 100,
     });
 
     // Inject stealth on every page load.
@@ -141,45 +143,22 @@ class WebViewManager {
       return { success: false, error: 'Invalid bounds: must have numeric x, y, width, height' };
     }
 
-    const prevBounds = info.view.getBounds();
+    // Reject degenerate bounds (element not laid out or invalid)
+    if (bounds.width < 10 || bounds.height < 10) {
+      return { success: false, error: `Bounds too small: ${bounds.width}x${bounds.height}` };
+    }
+
     info.isShow = true;
 
     if (!info.view.webContents.isDestroyed()) {
-      // Disable throttling BEFORE setBounds so Chromium processes the
-      // viewport resize immediately instead of deferring it.
       info.view.webContents.setBackgroundThrottling(false);
     }
 
     info.view.setBounds(bounds);
 
-    // Diagnostic logging
-    const winBounds = this.win && !this.win.isDestroyed() ? this.win.getContentBounds() : null;
-    const url = info.view.webContents.isDestroyed() ? '(destroyed)' : info.view.webContents.getURL();
-    console.log(`[WebViewManager] showView(${id})`,
-      `\n  requested: ${JSON.stringify(bounds)}`,
-      `\n  actual:    ${JSON.stringify(info.view.getBounds())}`,
-      `\n  previous:  ${JSON.stringify(prevBounds)}`,
-      `\n  winContent:${JSON.stringify(winBounds)}`,
-      `\n  url: ${url}`);
-
     if (!info.view.webContents.isDestroyed()) {
-      // Force Chromium to repaint. Views that loaded content while off-screen
-      // with backgroundThrottling=true may not have a painted frame.
+      // Force repaint for views that were off-screen with backgroundThrottling
       info.view.webContents.invalidate();
-
-      // When viewport dimensions change, force reflow so page re-layouts.
-      if (prevBounds.width !== bounds.width || prevBounds.height !== bounds.height) {
-        info.view.webContents.executeJavaScript(
-          'window.dispatchEvent(new Event("resize"))'
-        ).catch(() => {});
-      }
-
-      // Log page viewport for diagnostics
-      info.view.webContents.executeJavaScript(
-        'JSON.stringify({innerWidth: window.innerWidth, innerHeight: window.innerHeight, scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth})'
-      ).then(result => {
-        console.log(`[WebViewManager] showView(${id}) page viewport: ${result}`);
-      }).catch(() => {});
     }
 
     // Send current URL to renderer
@@ -205,8 +184,8 @@ class WebViewManager {
     info.view.setBounds({
       x: -9999 + idx * 100,
       y: -9999 + idx * 100,
-      width: 1920,
-      height: 1080,
+      width: 100,
+      height: 100,
     });
     info.isShow = false;
 

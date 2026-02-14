@@ -33,12 +33,19 @@ export default function EmbeddedBrowser({
   const [inputUrl, setInputUrl] = useState(initialUrl || '');
   const [isLoading, setIsLoading] = useState(false);
   const boundsRef = useRef(null);
+  // Guard: prevent showWebview IPC calls after unmount or when hidden
+  const activeRef = useRef(false);
 
   // Send bounds to Electron to position the native WebContentsView
   const updateBounds = useCallback(() => {
-    if (!containerRef.current || !visible || !viewId) return;
+    // Check both component-level and global guards. The global flag is set
+    // synchronously by App.navigate() before React commits the unmount.
+    if (!activeRef.current || window.__amiWebviewsHidden || !containerRef.current || !visible || !viewId) return;
 
     const rect = containerRef.current.getBoundingClientRect();
+    // Reject degenerate bounds (element not laid out yet or off-screen)
+    if (rect.width < 10 || rect.height < 10) return;
+
     const bounds = {
       x: Math.round(rect.x),
       y: Math.round(rect.y),
@@ -54,7 +61,6 @@ export default function EmbeddedBrowser({
     }
     boundsRef.current = bounds;
 
-    console.log(`[EmbeddedBrowser] showWebview(${viewId}) bounds=`, bounds);
     window.electronAPI?.showWebview(viewId, bounds);
   }, [viewId, visible]);
 
@@ -63,12 +69,24 @@ export default function EmbeddedBrowser({
     if (!viewId) return;
 
     if (visible) {
-      console.log(`[EmbeddedBrowser] visible=true viewId=${viewId}, scheduling updateBounds in 50ms`);
-      // Small delay to let React layout settle before measuring
-      const timer = setTimeout(updateBounds, 50);
-      return () => clearTimeout(timer);
+      activeRef.current = true;
+      window.__amiWebviewsHidden = false;
+      // Double-rAF ensures layout is committed before measuring bounds.
+      // Unlike setTimeout(50ms), rAF callbacks fire within the same frame.
+      // The cancelled flag + global guard prevent stale showWebview calls.
+      let cancelled = false;
+      const raf1 = requestAnimationFrame(() => {
+        if (cancelled) return;
+        requestAnimationFrame(() => {
+          if (!cancelled) updateBounds();
+        });
+      });
+      return () => {
+        cancelled = true;
+        cancelAnimationFrame(raf1);
+      };
     } else {
-      console.log(`[EmbeddedBrowser] visible=false viewId=${viewId}, hiding`);
+      activeRef.current = false;
       window.electronAPI?.hideWebview(viewId);
       boundsRef.current = null;
     }
@@ -78,19 +96,24 @@ export default function EmbeddedBrowser({
   useEffect(() => {
     if (!containerRef.current || !visible) return;
 
-    const observer = new ResizeObserver(() => {
-      updateBounds();
-    });
+    let debounceTimer = null;
+    const debouncedUpdate = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(updateBounds, 100);
+    };
+
+    const observer = new ResizeObserver(debouncedUpdate);
     observer.observe(containerRef.current);
 
     // Also update on window resize/scroll
-    window.addEventListener('resize', updateBounds);
-    window.addEventListener('scroll', updateBounds, true);
+    window.addEventListener('resize', debouncedUpdate);
+    window.addEventListener('scroll', debouncedUpdate, true);
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       observer.disconnect();
-      window.removeEventListener('resize', updateBounds);
-      window.removeEventListener('scroll', updateBounds, true);
+      window.removeEventListener('resize', debouncedUpdate);
+      window.removeEventListener('scroll', debouncedUpdate, true);
     };
   }, [visible, updateBounds]);
 
@@ -140,6 +163,7 @@ export default function EmbeddedBrowser({
   // Cleanup: hide view on unmount
   useEffect(() => {
     return () => {
+      activeRef.current = false;
       if (viewId) {
         window.electronAPI?.hideWebview(viewId);
       }
