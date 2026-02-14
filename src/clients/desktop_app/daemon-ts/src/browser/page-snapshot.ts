@@ -30,11 +30,11 @@ function getSnapshotJs(): string {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = dirname(__filename);
 
-  // The unified_analyzer.js lives in the Python browser tools directory.
-  // From daemon-ts/src/browser/ (or daemon-ts/dist/browser/), go up 3 levels
-  // to desktop_app/, then into ami_daemon/.
+  // unified_analyzer.js lives alongside this file in scripts/
   const candidates = [
-    resolve(__dirname, "../../../ami_daemon/base_agent/tools/eigent_browser/unified_analyzer.js"),
+    resolve(__dirname, "scripts/unified_analyzer.js"),
+    // Fallback: relative to daemon-ts/dist/browser/ at runtime
+    resolve(__dirname, "../src/browser/scripts/unified_analyzer.js"),
   ];
 
   for (const candidate of candidates) {

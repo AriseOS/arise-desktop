@@ -63,10 +63,11 @@ function getTrackerScript(): string {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = dirname(__filename);
 
-  // From daemon-ts/src/browser/ (or daemon-ts/dist/browser/), go up 3 levels
-  // to desktop_app/, then into ami_daemon/.
+  // behavior_tracker.js lives alongside this file in scripts/
   const candidates = [
-    resolve(__dirname, "../../../ami_daemon/base_agent/tools/eigent_browser/scripts/behavior_tracker.js"),
+    resolve(__dirname, "scripts/behavior_tracker.js"),
+    // Fallback: relative to daemon-ts/dist/browser/ at runtime
+    resolve(__dirname, "../src/browser/scripts/behavior_tracker.js"),
   ];
 
   for (const candidate of candidates) {

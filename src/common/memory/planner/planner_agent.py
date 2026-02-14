@@ -53,10 +53,10 @@ class PlannerAgent:
             task_state: TaskState for SSE events (optional, uses DummyTaskState if None).
             public_memory: Optional WorkflowMemory instance (public/shared memory).
         """
-        from src.clients.desktop_app.ami_daemon.base_agent.core.ami_agent import (
+        from src.common.agent.ami_agent import (
             AMIAgent,
         )
-        from src.clients.desktop_app.ami_daemon.base_agent.core.ami_tool import (
+        from src.common.agent.ami_tool import (
             AMITool,
         )
 

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
-    "build": "tsc",
+    "build": "tsc && cp -r src/browser/scripts dist/browser/scripts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

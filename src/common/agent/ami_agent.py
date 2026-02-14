@@ -26,17 +26,79 @@ from src.common.llm.base_provider import (
 )
 
 from .ami_tool import AMITool
-from ..events import (
-    ActivateAgentData,
-    AgentReportData,
-    DeactivateAgentData,
-    ActivateToolkitData,
-    DeactivateToolkitData,
-    NoticeData,
-    AgentThinkingData,
-)
 
 logger = logging.getLogger(__name__)
+
+
+# =========================================================================
+# Lightweight SSE event data classes (decoupled from daemon events module)
+# =========================================================================
+
+@dataclass
+class ActivateAgentData:
+    task_id: Optional[str] = None
+    agent_name: str = ""
+    agent_id: Optional[str] = None
+    process_task_id: Optional[str] = None
+    message: Optional[str] = None
+    executor_id: Optional[str] = None
+
+
+@dataclass
+class DeactivateAgentData:
+    task_id: Optional[str] = None
+    agent_name: str = ""
+    agent_id: Optional[str] = None
+    process_task_id: Optional[str] = None
+    message: Optional[str] = None
+    tokens_used: Optional[int] = None
+
+
+@dataclass
+class AgentThinkingData:
+    task_id: Optional[str] = None
+    agent_name: str = ""
+    thinking: str = ""
+    step: Optional[int] = None
+
+
+@dataclass
+class AgentReportData:
+    task_id: Optional[str] = None
+    message: str = ""
+    report_type: str = "info"
+
+
+@dataclass
+class ActivateToolkitData:
+    task_id: Optional[str] = None
+    agent_name: Optional[str] = None
+    toolkit_name: str = ""
+    method_name: str = ""
+    message: Optional[str] = None
+    process_task_id: Optional[str] = None
+    input_preview: Optional[str] = None
+
+
+@dataclass
+class DeactivateToolkitData:
+    task_id: Optional[str] = None
+    agent_name: Optional[str] = None
+    toolkit_name: str = ""
+    method_name: str = ""
+    message: Optional[str] = None
+    process_task_id: Optional[str] = None
+    output_preview: Optional[str] = None
+
+
+@dataclass
+class NoticeData:
+    task_id: Optional[str] = None
+    level: str = "info"
+    title: str = ""
+    message: str = ""
+    duration_ms: Optional[int] = None
+
 
 # Tool name prefix to Toolkit name mapping
 _TOOL_PREFIX_TO_TOOLKIT = {

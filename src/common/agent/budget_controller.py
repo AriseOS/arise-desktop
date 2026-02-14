@@ -134,6 +134,16 @@ class BudgetState:
     warn_time: Optional[datetime] = None
 
 
+def _run_async_safely(coro) -> None:
+    """Run async coroutine safely from sync context."""
+    try:
+        loop = asyncio.get_running_loop()
+        asyncio.create_task(coro)
+    except RuntimeError:
+        # No event loop running
+        pass
+
+
 class BudgetController:
     """Controls and enforces budget limits during task execution.
 
@@ -367,10 +377,7 @@ class BudgetController:
 
     def _emit_async(self, callback: Callable, event: Dict[str, Any]) -> None:
         """Emit event via callback (handles both sync and async)."""
-        from ..events.toolkit_listen import _run_async_safely
-
         if asyncio.iscoroutinefunction(callback):
-            # Use _run_async_safely for proper handling in both contexts
             _run_async_safely(callback(event))
         else:
             try:

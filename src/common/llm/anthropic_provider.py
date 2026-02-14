@@ -49,8 +49,8 @@ def _get_budget_classes():
     """Lazy import budget tracking classes."""
     if not _budget_imports:
         try:
-            from src.clients.desktop_app.ami_daemon.base_agent.core.token_usage import TokenUsage
-            from src.clients.desktop_app.ami_daemon.base_agent.core.budget_controller import (
+            from src.common.agent.token_usage import TokenUsage
+            from src.common.agent.budget_controller import (
                 BudgetController, BudgetConfig
             )
             _budget_imports['TokenUsage'] = TokenUsage

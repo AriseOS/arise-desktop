@@ -50,10 +50,10 @@ class LearnerAgent:
             embedding_service: EmbeddingService for query encoding.
             task_state: TaskState for SSE events (optional).
         """
-        from src.clients.desktop_app.ami_daemon.base_agent.core.ami_agent import (
+        from src.common.agent.ami_agent import (
             AMIAgent,
         )
-        from src.clients.desktop_app.ami_daemon.base_agent.core.ami_tool import (
+        from src.common.agent.ami_tool import (
             AMITool,
         )
 

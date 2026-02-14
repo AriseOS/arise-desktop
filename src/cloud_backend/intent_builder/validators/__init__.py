@@ -13,7 +13,6 @@ import logging
 from typing import Dict, List, Any, Optional, TYPE_CHECKING
 from dataclasses import dataclass, field
 
-from .yaml_validator import WorkflowYAMLValidator
 from .semantic_validator import SemanticValidator, SemanticValidationResult, SemanticIssue
 
 # Import from agents/tools for unified access
@@ -204,9 +203,6 @@ class WorkflowValidator:
 
 
 __all__ = [
-    # Legacy
-    "WorkflowYAMLValidator",
-
     # Rule validation
     "RuleValidator",
     "ValidationResult",
