@@ -80,11 +80,14 @@ async function getTabInfoSummary(session: BrowserSession): Promise<string> {
   }
 }
 
+const SNAPSHOT_URL_TIP =
+  "> **Note**: This snapshot does NOT include href URLs. To see all links with their URLs, call `browser_get_page_snapshot(include_links=true)` instead of clicking each link.\n\n";
+
 async function getSnapshot(session: BrowserSession, forceRefresh = false): Promise<string> {
   try {
     const snapshot = await session.getSnapshot({ forceRefresh });
     // Strip inline href suffixes to save tokens
-    return snapshot.replace(/ -> https?:\/\/\S+/g, "");
+    return SNAPSHOT_URL_TIP + snapshot.replace(/ -> https?:\/\/\S+/g, "");
   } catch (e) {
     logger.debug({ err: e }, "Failed to get snapshot");
     return `[Snapshot unavailable: ${e}]`;
@@ -478,9 +481,7 @@ function createGetPageSnapshotTool(sessionId: string, emitter?: SSEEmitter): Age
 
       if (!params.include_links) {
         snapshot = snapshot.replace(/ -> https?:\/\/\S+/g, "");
-        const tip =
-          "\n\n> **Tip**: To extract all links with their URLs, call `browser_get_page_snapshot(include_links=true)`.";
-        return textResult(header + snapshot + tip);
+        return textResult(SNAPSHOT_URL_TIP + header + snapshot);
       }
 
       return textResult(header + snapshot);

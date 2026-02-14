@@ -10,7 +10,7 @@
 import { Type, type Static } from "@sinclair/typebox";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Agent } from "@mariozechner/pi-agent-core";
-import { streamSimple } from "@mariozechner/pi-ai";
+import { debugStreamSimple } from "../utils/agent-helpers.js";
 import { getConfiguredModel } from "../utils/config.js";
 import { resolve, basename, dirname } from "node:path";
 import { writeFile, readFile, mkdir } from "node:fs/promises";
@@ -139,7 +139,7 @@ async function askVision(
       }
       return undefined;
     },
-    streamFn: streamSimple,
+    streamFn: debugStreamSimple,
   });
 
   await agent.prompt("");

@@ -11,7 +11,6 @@
  */
 
 import { Agent } from "@mariozechner/pi-agent-core";
-import { streamSimple } from "@mariozechner/pi-ai";
 import { getConfiguredModel, getAnthropicApiKey } from "../utils/config.js";
 import {
   FINE_GRAINED_DECOMPOSE_PROMPT,
@@ -24,7 +23,7 @@ import {
 } from "./schemas.js";
 import { Action } from "../events/types.js";
 import type { SSEEmitter } from "../events/emitter.js";
-import { agentPrompt, requireApiKey } from "../utils/agent-helpers.js";
+import { agentPrompt, requireApiKey, debugStreamSimple } from "../utils/agent-helpers.js";
 import { createLogger } from "../utils/logging.js";
 import {
   MemoryToolkit,
@@ -181,7 +180,7 @@ export class AMITaskPlanner {
         thinkingLevel: "off",
       },
       getApiKey: async () => resolvedApiKey,
-      streamFn: streamSimple,
+      streamFn: debugStreamSimple,
     });
 
     await agentPrompt(agent, prompt);

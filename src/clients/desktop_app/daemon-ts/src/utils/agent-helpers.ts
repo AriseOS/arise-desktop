@@ -16,7 +16,11 @@
  * BEFORE calling prompt().
  */
 
-import type { Agent } from "@mariozechner/pi-agent-core";
+import type { Agent, StreamFn } from "@mariozechner/pi-agent-core";
+import { streamSimple } from "@mariozechner/pi-ai";
+import { createLogger, isDebug } from "./logging.js";
+
+const logger = createLogger("llm-debug");
 
 /**
  * Call agent.prompt() and throw if the agent encountered an error.
@@ -49,3 +53,73 @@ export function requireApiKey(apiKey: string | undefined, provider = "anthropic"
   }
   return apiKey;
 }
+
+// ===== Debug Stream Wrapper =====
+
+function summarizeMessageContent(msg: any): string {
+  if (typeof msg.content === "string") return msg.content.slice(0, 500);
+  if (!Array.isArray(msg.content)) return String(msg.content).slice(0, 200);
+  return msg.content
+    .map((c: any) => {
+      if (c.type === "text") return c.text?.slice(0, 500) ?? "";
+      if (c.type === "thinking") return `[thinking] ${(c.thinking ?? "").slice(0, 300)}`;
+      if (c.type === "toolCall") return `[toolCall] ${c.name}(${JSON.stringify(c.arguments).slice(0, 300)})`;
+      if (c.type === "image") return "[image]";
+      return `[${c.type}]`;
+    })
+    .join("\n");
+}
+
+/**
+ * streamSimple wrapper that logs the full LLM request context in debug mode.
+ * Logs: system prompt (truncated), message count by role, tool names, and each message preview.
+ *
+ * Use this instead of importing streamSimple directly.
+ */
+export const debugStreamSimple: StreamFn = (model, context, options) => {
+  if (isDebug) {
+    const msgs = context.messages ?? [];
+    const roleCounts: Record<string, number> = {};
+    for (const m of msgs) {
+      roleCounts[m.role] = (roleCounts[m.role] ?? 0) + 1;
+    }
+    const toolNames = (context.tools ?? []).map((t) => t.name);
+
+    logger.debug(
+      {
+        model: model.id,
+        provider: model.provider,
+        messageCount: msgs.length,
+        roleCounts,
+        toolCount: toolNames.length,
+      },
+      "=== LLM REQUEST ===",
+    );
+
+    // System prompt
+    if (context.systemPrompt) {
+      logger.debug(
+        "  [system] (%d chars): %s",
+        context.systemPrompt.length,
+        context.systemPrompt.slice(0, 500),
+      );
+    }
+
+    // Tools
+    if (toolNames.length > 0) {
+      logger.debug("  [tools]: %s", toolNames.join(", "));
+    }
+
+    // Messages (last 10 to avoid flooding)
+    const displayMsgs = msgs.length > 10 ? msgs.slice(-10) : msgs;
+    if (msgs.length > 10) {
+      logger.debug("  ... (%d earlier messages omitted)", msgs.length - 10);
+    }
+    for (const msg of displayMsgs) {
+      const summary = summarizeMessageContent(msg);
+      logger.debug("  [%s]: %s", msg.role, summary.slice(0, 300));
+    }
+  }
+
+  return streamSimple(model, context, options);
+};

@@ -1,19 +1,22 @@
 /**
- * AMI Task Executor — Sequential execution with dependency resolution.
+ * AMI Task Executor — Parallel batch execution with dependency resolution.
  *
  * Ported from ami_task_executor.py.
  *
  * Key features:
+ * - Parallel dispatch: eligible subtasks (all deps satisfied) run concurrently
+ * - Semaphore-based concurrency limit (MAX_PARALLEL_SUBTASKS)
+ * - Per-subtask browser sessions for parallel browser agents
  * - workflow_guide injected as explicit instruction in prompt
- * - Sequential execution with dependency resolution
  * - SSE events for real-time UI updates
  * - Pause/resume support
  * - Fail-fast: if a subtask fails, skip all dependents
  * - Replan tool injection per subtask
  */
 
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { Agent } from "@mariozechner/pi-agent-core";
-import { streamSimple } from "@mariozechner/pi-ai";
 import { getConfiguredModel, getAnthropicApiKey } from "../utils/config.js";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import {
@@ -31,7 +34,7 @@ import { REPLAN_INSTRUCTION } from "../prompts/task-decomposition.js";
 import { createReplanTools } from "../tools/replan-tools.js";
 import { ExecutionDataCollector } from "./execution-data-collector.js";
 import { getCloudClient, type RequestCredentials } from "../services/cloud-client.js";
-import { agentPrompt, requireApiKey } from "../utils/agent-helpers.js";
+import { agentPrompt, requireApiKey, debugStreamSimple } from "../utils/agent-helpers.js";
 import { createLogger } from "../utils/logging.js";
 import { BehaviorRecorder } from "../browser/behavior-recorder.js";
 import { BrowserSession } from "../browser/browser-session.js";
@@ -43,6 +46,33 @@ import {
 } from "../services/task-state-persistence.js";
 
 const logger = createLogger("task-executor");
+
+const MAX_PARALLEL_SUBTASKS = 5;
+
+// ===== Semaphore =====
+
+class Semaphore {
+  private queue: (() => void)[] = [];
+  private count: number;
+
+  constructor(max: number) {
+    this.count = max;
+  }
+
+  async acquire(): Promise<void> {
+    if (this.count > 0) {
+      this.count--;
+      return;
+    }
+    await new Promise<void>((r) => this.queue.push(r));
+  }
+
+  release(): void {
+    const next = this.queue.shift();
+    if (next) next();
+    else this.count++;
+  }
+}
 
 // ===== AMITaskExecutor =====
 
@@ -60,6 +90,8 @@ export class AMITaskExecutor implements TaskExecutorLike {
   // Agent management: agentType -> tools for that agent type
   private agentTools: Map<string, AgentTool<any>[]>;
   private systemPrompts: Map<string, string>;
+  private workspaceDir: string;
+  private childAgentToolsFactory?: (agentType: string, sessionId: string) => AgentTool<any>[];
 
   // Subtask management
   private _subtasks: AMISubtask[] = [];
@@ -67,13 +99,13 @@ export class AMITaskExecutor implements TaskExecutorLike {
 
   // Pause/resume
   private _paused = false;
-  private pauseResolve: (() => void) | null = null;
+  private pauseResolvers: (() => void)[] = [];
 
   // Stop control
   private _stopped = false;
 
-  // Currently running agent
-  private currentAgent: Agent | null = null;
+  // Running agents (key = subtaskId)
+  private _runningAgents = new Map<string, Agent>();
 
   constructor(opts: {
     taskId: string;
@@ -87,6 +119,8 @@ export class AMITaskExecutor implements TaskExecutorLike {
     executorId?: string;
     taskLabel?: string;
     userId?: string;
+    workspaceDir?: string;
+    childAgentToolsFactory?: (agentType: string, sessionId: string) => AgentTool<any>[];
   }) {
     this.taskId = opts.taskId;
     this.emitter = opts.emitter;
@@ -99,6 +133,8 @@ export class AMITaskExecutor implements TaskExecutorLike {
     this.executorId = opts.executorId ?? "";
     this.taskLabel = opts.taskLabel ?? "";
     this.userId = opts.userId;
+    this.workspaceDir = opts.workspaceDir ?? "";
+    this.childAgentToolsFactory = opts.childAgentToolsFactory;
 
     logger.info(
       {
@@ -121,7 +157,13 @@ export class AMITaskExecutor implements TaskExecutorLike {
   }
 
   getCurrentAgent(): AgentLike | null {
-    return this.currentAgent as AgentLike | null;
+    // Backward compat: return first running agent (for inject_message)
+    const first = this._runningAgents.values().next();
+    return first.done ? null : (first.value as AgentLike);
+  }
+
+  getRunningAgents(): Map<string, AgentLike> {
+    return this._runningAgents as Map<string, AgentLike>;
   }
 
   setSubtasks(subtasks: AMISubtask[]): void {
@@ -132,14 +174,14 @@ export class AMITaskExecutor implements TaskExecutorLike {
 
   stop(): void {
     this._stopped = true;
-    if (this.currentAgent) {
-      this.currentAgent.abort();
+    for (const agent of this._runningAgents.values()) {
+      agent.abort();
     }
-    // Wake up if paused
-    if (this.pauseResolve) {
-      this.pauseResolve();
-      this.pauseResolve = null;
+    // Wake up all paused waiters
+    for (const resolve of this.pauseResolvers) {
+      resolve();
     }
+    this.pauseResolvers = [];
   }
 
   pause(): void {
@@ -149,10 +191,11 @@ export class AMITaskExecutor implements TaskExecutorLike {
 
   resume(): void {
     this._paused = false;
-    if (this.pauseResolve) {
-      this.pauseResolve();
-      this.pauseResolve = null;
+    // Wake up all paused waiters
+    for (const resolve of this.pauseResolvers) {
+      resolve();
     }
+    this.pauseResolvers = [];
     logger.info("Executor resumed");
   }
 
@@ -177,6 +220,7 @@ export class AMITaskExecutor implements TaskExecutorLike {
     );
 
     const collector = new ExecutionDataCollector();
+    const semaphore = new Semaphore(MAX_PARALLEL_SUBTASKS);
     // Count subtasks that are already DONE (e.g., from resume)
     let completed = this._subtasks.filter((s) => s.state === SubtaskState.DONE).length;
     let failed = 0;
@@ -192,15 +236,15 @@ export class AMITaskExecutor implements TaskExecutorLike {
         failed += count;
       });
 
-      // Find next executable subtask
-      const subtask = this.getNextSubtask();
+      // Find ALL eligible subtasks (deps satisfied)
+      const eligible = this.getAllEligibleSubtasks();
 
-      // Emit again (getNextSubtask may fail-fast more subtasks)
+      // Emit again (getAllEligibleSubtasks may fail-fast more subtasks)
       this.emitNewlyFailed(emittedFailures, (count) => {
         failed += count;
       });
 
-      if (subtask === null) {
+      if (eligible.length === 0) {
         // Check for stuck PENDING subtasks (deadlock)
         const stuck = this._subtasks.filter(
           (s) => s.state === SubtaskState.PENDING,
@@ -221,12 +265,21 @@ export class AMITaskExecutor implements TaskExecutorLike {
         break;
       }
 
-      // Execute the subtask
-      const success = await this.executeSubtask(subtask, collector);
-      if (success) {
-        completed++;
-      } else {
-        failed++;
+      // Execute batch in parallel
+      logger.info(
+        { batchSize: eligible.length, ids: eligible.map((s) => s.id) },
+        "Dispatching parallel batch",
+      );
+      const batchResults = await this.executeBatch(eligible, collector, semaphore);
+      completed += batchResults.completed;
+      failed += batchResults.failed;
+
+      // Mark batch-failed subtasks as emitted so emitNewlyFailed
+      // doesn't double-count them on the next loop iteration
+      for (const st of eligible) {
+        if (st.state === SubtaskState.FAILED) {
+          emittedFailures.add(st.id);
+        }
       }
     }
 
@@ -262,9 +315,48 @@ export class AMITaskExecutor implements TaskExecutorLike {
     return result;
   }
 
+  // ===== Batch Parallel Dispatch =====
+
+  private async executeBatch(
+    subtasks: AMISubtask[],
+    collector: ExecutionDataCollector,
+    semaphore: Semaphore,
+  ): Promise<{ completed: number; failed: number }> {
+    let completed = 0;
+    let failed = 0;
+
+    const runOne = async (subtask: AMISubtask): Promise<void> => {
+      await semaphore.acquire();
+      try {
+        const success = await this.executeSubtask(subtask, collector);
+        if (success) completed++;
+        else failed++;
+      } finally {
+        semaphore.release();
+      }
+    };
+
+    const results = await Promise.allSettled(
+      subtasks.map((st) => runOne(st)),
+    );
+
+    // Count unexpected rejections (executeSubtask catches its own errors,
+    // so rejections here indicate bugs)
+    for (const r of results) {
+      if (r.status === "rejected") {
+        logger.error({ err: r.reason }, "Unexpected rejection in executeBatch");
+        failed++;
+      }
+    }
+
+    return { completed, failed };
+  }
+
   // ===== Dependency Resolution =====
 
-  private getNextSubtask(): AMISubtask | null {
+  private getAllEligibleSubtasks(): AMISubtask[] {
+    const eligible: AMISubtask[] = [];
+
     for (const subtask of this._subtasks) {
       if (subtask.state !== SubtaskState.PENDING) continue;
 
@@ -272,9 +364,11 @@ export class AMITaskExecutor implements TaskExecutorLike {
       for (const depId of subtask.dependsOn) {
         const dep = this.subtaskMap.get(depId);
         if (!dep) {
+          subtask.state = SubtaskState.FAILED;
+          subtask.error = `Depends on non-existent task '${depId}'`;
           logger.warn(
             { subtaskId: subtask.id, depId },
-            "Subtask depends on non-existent task",
+            "Subtask failed: depends on non-existent task",
           );
           depsSatisfied = false;
           break;
@@ -296,10 +390,10 @@ export class AMITaskExecutor implements TaskExecutorLike {
         }
       }
 
-      if (depsSatisfied) return subtask;
+      if (depsSatisfied) eligible.push(subtask);
     }
 
-    return null;
+    return eligible;
   }
 
   // ===== Execute Single Subtask =====
@@ -308,8 +402,21 @@ export class AMITaskExecutor implements TaskExecutorLike {
     subtask: AMISubtask,
     collector: ExecutionDataCollector,
   ): Promise<boolean> {
-    // Get tools for this agent type
-    const tools = this.agentTools.get(subtask.agentType);
+    // Resolve tools: for parallel browser subtasks, create fresh tools via factory
+    // with a unique sessionId so each parallel agent gets its own Electron pool page.
+    const uniqueSessionId = `${this.taskId}_par_${subtask.id}`;
+    let tools: AgentTool<any>[] | undefined;
+
+    if (this.childAgentToolsFactory && subtask.agentType === "browser") {
+      tools = this.childAgentToolsFactory(subtask.agentType, uniqueSessionId);
+      logger.info(
+        { subtaskId: subtask.id, sessionId: uniqueSessionId },
+        "Created per-subtask browser tools",
+      );
+    } else {
+      tools = this.agentTools.get(subtask.agentType);
+    }
+
     if (!tools) {
       logger.error(
         { agentType: subtask.agentType },
@@ -341,7 +448,7 @@ export class AMITaskExecutor implements TaskExecutorLike {
 
           // Online Learning: fresh recorder for each attempt (browser subtasks only)
           if (subtask.agentType === "browser") {
-            recorder = await this.startBehaviorRecorder();
+            recorder = await this.startBehaviorRecorder(uniqueSessionId);
           }
 
           logger.info(
@@ -376,10 +483,11 @@ export class AMITaskExecutor implements TaskExecutorLike {
               thinkingLevel: "off",
             },
             getApiKey: async () => resolvedApiKey,
-            streamFn: streamSimple,
+            streamFn: debugStreamSimple,
           });
 
-          this.currentAgent = agent;
+          // Track running agent by subtaskId
+          this._runningAgents.set(subtask.id, agent);
 
           // Bridge agent events to SSE
           const agentName = `${subtask.agentType}Agent`;
@@ -453,7 +561,7 @@ export class AMITaskExecutor implements TaskExecutorLike {
           } finally {
             unsubscribeTurnGuard();
             unsubscribe();
-            this.currentAgent = null;
+            this._runningAgents.delete(subtask.id);
           }
         } catch (e: any) {
           // Online Learning: stop recorder from failed attempt before retry
@@ -461,6 +569,10 @@ export class AMITaskExecutor implements TaskExecutorLike {
             await this.stopBehaviorRecorder(recorder);
             recorder = null;
           }
+
+          // Remove dynamic subtasks added during this failed attempt
+          // to prevent duplicates on retry (matches Python _remove_dynamic_subtasks)
+          this.removeDynamicSubtasks(subtask.id);
 
           subtask.retryCount++;
           subtask.error = e.message ?? String(e);
@@ -484,10 +596,33 @@ export class AMITaskExecutor implements TaskExecutorLike {
 
       return false;
     } finally {
+      // Ensure subtask is not left in RUNNING state (e.g., after stop/cancel)
+      if (subtask.state === SubtaskState.RUNNING) {
+        subtask.state = SubtaskState.FAILED;
+        subtask.error = subtask.error ?? "Cancelled";
+        this.emitSubtaskState(subtask);
+      }
+
       // Online Learning: stop recorder to release CDP session (runs once at exit)
       if (recorder) {
         await this.stopBehaviorRecorder(recorder);
         recorder = null;
+      }
+
+      // Clean up parallel browser session: return Electron pool page
+      if (this.childAgentToolsFactory && subtask.agentType === "browser") {
+        try {
+          const session = BrowserSession.getExistingInstance(uniqueSessionId);
+          if (session) {
+            await session.close();
+            logger.info(
+              { subtaskId: subtask.id, sessionId: uniqueSessionId },
+              "Closed parallel browser session",
+            );
+          }
+        } catch (e) {
+          logger.warn({ err: e, subtaskId: subtask.id }, "Failed to close parallel browser session");
+        }
       }
     }
   }
@@ -500,7 +635,7 @@ export class AMITaskExecutor implements TaskExecutorLike {
   ): string {
     const parts: string[] = [];
 
-    // Browser state
+    // Browser state — tell agent where the browser currently is
     if (browserContext) {
       parts.push(
         `## Current Browser State\n${browserContext}\n\n` +
@@ -508,12 +643,12 @@ export class AMITaskExecutor implements TaskExecutorLike {
       );
     }
 
-    // Task content
+    // Task content - this is the ONLY thing the agent should focus on
     parts.push(`## Your Task\n${subtask.content}`);
 
-    // Workflow guide
+    // Workflow guide - as reference context
     if (subtask.workflowGuide) {
-      parts.push(`
+      parts.push(`\
 ## Reference: Historical Workflow
 
 The following is a workflow from a SIMILAR past task. Use it as background reference, NOT as a step-by-step instruction.
@@ -527,36 +662,124 @@ ${subtask.workflowGuide}
 - Do NOT execute steps that go beyond your assigned task
 - When your specific task is complete, STOP immediately`);
     } else {
-      parts.push(`
+      parts.push(`\
 ## Note
 No historical workflow guide available. Please explore and complete the task using your best judgment.`);
     }
 
-    // Dependency results
+    // Previous results from dependencies
     const depResults: string[] = [];
     for (const depId of subtask.dependsOn) {
       const dep = this.subtaskMap.get(depId);
-      if (dep?.result) {
+      if (!dep) {
+        logger.warn(
+          { subtaskId: subtask.id, depId },
+          "Dependency NOT FOUND in subtaskMap",
+        );
+      } else if (!dep.result) {
+        logger.warn(
+          { subtaskId: subtask.id, depId, depState: dep.state },
+          "Dependency found but has NO RESULT",
+        );
+      } else {
+        logger.info(
+          { subtaskId: subtask.id, depId, resultLen: dep.result.length },
+          "Injecting dependency result",
+        );
         if (dep.result.length > 2000) {
+          // Large result: write to workspace file, inject file reference
+          const fileRef = this.saveResultToFile(depId, dep.result);
           depResults.push(
             `### Result from task '${depId}':\n` +
-              `(Result truncated to 2000 chars)\n${dep.result.slice(0, 2000)}...`,
+              `Result saved to file: ${fileRef}\n` +
+              `Use \`read_file\` to read the full data.`,
           );
         } else {
           depResults.push(`### Result from task '${depId}':\n${dep.result}`);
         }
       }
     }
+
     if (depResults.length > 0) {
+      logger.info(
+        { subtaskId: subtask.id, depCount: depResults.length },
+        "Injecting dependency results into prompt",
+      );
       parts.push(
         "## Results from Previous Tasks\n" + depResults.join("\n\n"),
       );
     }
 
-    // Replan instruction
+    // Workspace files — let agent know what data is available
+    const workspaceListing = this.getWorkspaceListing();
+    if (workspaceListing) {
+      parts.push(
+        `## Workspace Files\n` +
+          `The following files were created by earlier tasks. ` +
+          `Use \`read_file\` to read files, or \`list_files\` to list contents.\n\n` +
+          `\`\`\`\n${workspaceListing}\n\`\`\``,
+      );
+    }
+
+    // Replan instruction — guide agent to split large tasks
     parts.push(REPLAN_INSTRUCTION);
 
     return parts.join("\n\n");
+  }
+
+  // ===== Workspace Helpers =====
+
+  /**
+   * Save large subtask result to a file in workspace.
+   * Returns the filename (agent cwd is already workspace).
+   */
+  private saveResultToFile(subtaskId: string, result: string): string {
+    if (!this.workspaceDir) {
+      throw new Error(
+        `workspaceDir required to save result for ${subtaskId}`,
+      );
+    }
+
+    fs.mkdirSync(this.workspaceDir, { recursive: true });
+
+    const fileName = `${subtaskId}_result.md`;
+    const filePath = path.join(this.workspaceDir, fileName);
+    fs.writeFileSync(filePath, result, "utf-8");
+
+    logger.info(
+      { subtaskId, filePath, chars: result.length },
+      "Saved large result to workspace file",
+    );
+    return fileName;
+  }
+
+  /**
+   * List files in workspace for prompt injection.
+   * Returns a compact file listing so the agent knows what data
+   * is available from earlier tasks without an extra tool call.
+   */
+  private getWorkspaceListing(): string | null {
+    if (!this.workspaceDir) return null;
+
+    try {
+      if (!fs.existsSync(this.workspaceDir)) return null;
+
+      const entries = fs.readdirSync(this.workspaceDir, { withFileTypes: true });
+      const lines: string[] = [];
+
+      for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+        if (!entry.isFile()) continue;
+        const filePath = path.join(this.workspaceDir, entry.name);
+        const stat = fs.statSync(filePath);
+        const sizeKb = stat.size / 1024;
+        lines.push(`${entry.name} (${sizeKb.toFixed(1)}KB)`);
+      }
+
+      return lines.length > 0 ? lines.join("\n") : null;
+    } catch (e) {
+      logger.warn({ err: e }, "Failed to list workspace files");
+      return null;
+    }
   }
 
   // ===== Replan Support =====
@@ -679,6 +902,30 @@ No historical workflow guide available. Please explore and complete the task usi
     }
 
     return newIds;
+  }
+
+  // ===== Dynamic Subtask Cleanup =====
+
+  /**
+   * Remove all dynamic subtasks spawned by a parent subtask.
+   * Called before retrying a failed subtask to prevent duplicate
+   * dynamic subtasks from being re-added on retry.
+   */
+  private removeDynamicSubtasks(parentSubtaskId: string): void {
+    const dynPrefix = `${parentSubtaskId}_dyn_`;
+    const toRemove = this._subtasks.filter((s) => s.id.startsWith(dynPrefix));
+
+    if (toRemove.length === 0) return;
+
+    this._subtasks = this._subtasks.filter((s) => !s.id.startsWith(dynPrefix));
+    for (const s of toRemove) {
+      this.subtaskMap.delete(s.id);
+    }
+
+    logger.info(
+      { parentSubtaskId, removedIds: toRemove.map((s) => s.id) },
+      "Removed dynamic subtasks from failed attempt",
+    );
   }
 
   // ===== SSE Helpers =====
@@ -890,12 +1137,19 @@ No historical workflow guide available. Please explore and complete the task usi
    * Returns the recorder instance, or null if startup fails.
    * All errors are caught — recorder failure must not block task execution.
    */
-  private async startBehaviorRecorder(): Promise<BehaviorRecorder | null> {
+  private async startBehaviorRecorder(sessionId?: string): Promise<BehaviorRecorder | null> {
     try {
-      const session = BrowserSession.getExistingInstance(this.taskId)
-        ?? BrowserSession.getDaemonSession();
+      const lookupId = sessionId ?? this.taskId;
+      let session = BrowserSession.getExistingInstance(lookupId);
+      if (!session && !sessionId) {
+        // Sequential mode: fall back to daemon session
+        session = BrowserSession.getDaemonSession();
+      }
+      // For parallel subtasks (sessionId provided), the BrowserSession may not exist yet
+      // (created lazily on first tool use). Skip recorder rather than
+      // falling back to daemon session which would mix parallel recordings.
       if (!session) {
-        logger.debug("[OnlineLearning] No BrowserSession available, skipping recorder");
+        logger.debug({ lookupId }, "[OnlineLearning] No BrowserSession available, skipping recorder");
         return null;
       }
 
@@ -973,7 +1227,7 @@ No historical workflow guide available. Please explore and complete the task usi
   private async waitIfPaused(): Promise<void> {
     while (this._paused && !this._stopped) {
       await new Promise<void>((resolve) => {
-        this.pauseResolve = resolve;
+        this.pauseResolvers.push(resolve);
       });
     }
   }

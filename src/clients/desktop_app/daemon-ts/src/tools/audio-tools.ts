@@ -11,7 +11,7 @@
 import { Type, type Static } from "@sinclair/typebox";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Agent } from "@mariozechner/pi-agent-core";
-import { streamSimple } from "@mariozechner/pi-ai";
+import { debugStreamSimple } from "../utils/agent-helpers.js";
 import { getConfiguredModel } from "../utils/config.js";
 import { readFile } from "node:fs/promises";
 import { resolve, basename } from "node:path";
@@ -126,7 +126,7 @@ async function transcribeAndAsk(
       }
       return undefined;
     },
-    streamFn: streamSimple,
+    streamFn: debugStreamSimple,
   });
 
   await agent.prompt(

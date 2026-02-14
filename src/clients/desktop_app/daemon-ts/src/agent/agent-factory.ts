@@ -9,7 +9,6 @@
  */
 
 import { Agent } from "@mariozechner/pi-agent-core";
-import { streamSimple } from "@mariozechner/pi-ai";
 import { getConfiguredModel, getAnthropicApiKey } from "../utils/config.js";
 import { Type, type Static } from "@sinclair/typebox";
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
@@ -34,7 +33,7 @@ import {
   createMemoryTools,
 } from "../tools/index.js";
 import { getConfig } from "../utils/config.js";
-import { agentPrompt, requireApiKey } from "../utils/agent-helpers.js";
+import { agentPrompt, requireApiKey, debugStreamSimple } from "../utils/agent-helpers.js";
 import { createLogger } from "../utils/logging.js";
 
 const logger = createLogger("agent-factory");
@@ -219,7 +218,7 @@ export function createChildAgent(
       thinkingLevel: "off",
     },
     getApiKey: async () => resolvedApiKey,
-    streamFn: streamSimple,
+    streamFn: debugStreamSimple,
   });
 
   return agent;

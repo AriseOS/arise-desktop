@@ -33,6 +33,8 @@ export const logger = pino({
   },
 });
 
+export { isDebug };
+
 export function createLogger(name: string) {
   return logger.child({ module: name });
 }

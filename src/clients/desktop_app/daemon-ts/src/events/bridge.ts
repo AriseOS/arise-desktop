@@ -12,6 +12,8 @@ import { createLogger } from "../utils/logging.js";
 
 const logger = createLogger("bridge");
 
+const isDebug = !!(process.env.AMI_DEBUG || process.env.LOG_LEVEL === "debug");
+
 /**
  * Safely JSON.stringify with circular reference protection.
  */
@@ -22,6 +24,27 @@ function safeStringify(value: unknown, maxLen = 200): string {
   } catch {
     return String(value).slice(0, maxLen);
   }
+}
+
+/**
+ * Extract a concise summary of message content for debug logging.
+ * For text/thinking: truncated text. For toolCall: name + args preview.
+ */
+function summarizeContent(
+  content: Array<{ type: string; text?: string; thinking?: string; name?: string; arguments?: unknown }>,
+  maxLen = 500,
+): string {
+  const parts: string[] = [];
+  for (const c of content) {
+    if (c.type === "text" && c.text) {
+      parts.push(`[text] ${c.text.slice(0, maxLen)}`);
+    } else if (c.type === "thinking" && c.thinking) {
+      parts.push(`[thinking] ${c.thinking.slice(0, maxLen)}`);
+    } else if (c.type === "toolCall") {
+      parts.push(`[toolCall] ${c.name}(${safeStringify(c.arguments, maxLen)})`);
+    }
+  }
+  return parts.join("\n");
 }
 
 /**
@@ -191,6 +214,45 @@ export function bridgeAgentToSSE(
         }
       }
       return;
+    }
+
+    // Debug: log full message content at message boundaries
+    if (isDebug && event.type === "message_end") {
+      const msg = (event as any).message;
+      if (msg?.role === "user") {
+        const text = extractText(msg);
+        logger.debug(
+          { agent: agentName, role: "user", contentLen: text.length },
+          ">>> LLM INPUT:\n%s",
+          text.slice(0, 2000),
+        );
+      } else if (msg?.role === "assistant") {
+        const summary = msg.content ? summarizeContent(msg.content, 1000) : "";
+        const usage = msg.usage;
+        logger.debug(
+          {
+            agent: agentName,
+            role: "assistant",
+            stopReason: msg.stopReason,
+            usage: usage ? {
+              input: usage.input,
+              output: usage.output,
+              cacheRead: usage.cacheRead,
+              total: usage.totalTokens,
+            } : undefined,
+          },
+          "<<< LLM OUTPUT:\n%s",
+          summary.slice(0, 2000),
+        );
+      } else if (msg?.role === "toolResult") {
+        const text = extractText(msg);
+        logger.debug(
+          { agent: agentName, role: "toolResult", tool: msg.toolName, isError: msg.isError },
+          "--- TOOL RESULT [%s]:\n%s",
+          msg.toolName,
+          text.slice(0, 1000),
+        );
+      }
     }
 
     // Skip message_end — we flush at tool_execution_start or agent_end instead

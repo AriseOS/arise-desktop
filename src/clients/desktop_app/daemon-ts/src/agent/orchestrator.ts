@@ -12,7 +12,6 @@
  */
 
 import { Agent } from "@mariozechner/pi-agent-core";
-import { streamSimple } from "@mariozechner/pi-ai";
 import { basename } from "node:path";
 import { statSync } from "node:fs";
 import { getConfiguredModel, getAnthropicApiKey, getConfig } from "../utils/config.js";
@@ -39,6 +38,7 @@ import type { SSEEmitter } from "../events/emitter.js";
 import type { TaskState } from "../services/task-state.js";
 import { t, detectLanguage } from "../utils/i18n.js";
 import { createLogger } from "../utils/logging.js";
+import { debugStreamSimple } from "../utils/agent-helpers.js";
 import {
   loadTaskState,
   listResumableTasks,
@@ -46,6 +46,7 @@ import {
   buildSnapshot,
 } from "../services/task-state-persistence.js";
 import type { TaskStateSnapshot } from "./schemas.js";
+import { createSearchTools } from "../tools/search-tools.js";
 
 const logger = createLogger("orchestrator");
 
@@ -115,15 +116,19 @@ function createDecomposeTaskTool(ctx: OrchestratorContext): AgentTool<any> {
         "decompose_task triggered",
       );
 
+      // Abort agent to prevent further tool calls (e.g., shell_exec polling).
+      // Matches Python's _should_stop_after_tool = True mechanism.
+      if (ctx.agent) {
+        ctx.agent.abort();
+      }
+
       return {
         content: [
           {
             type: "text",
             text: params.resume_task_id
-              ? "Resuming task from previous snapshot. The team will continue execution. " +
-                "Summarize the resume plan to the user."
-              : "Task delegated successfully. The team will now execute this task. " +
-                "Summarize what you plan to do for the user.",
+              ? "Resuming task from previous snapshot. The team will continue execution."
+              : "Task delegated successfully. The team will now execute this task.",
           },
         ],
         details: undefined,
@@ -494,35 +499,8 @@ function createAskHumanTool(ctx: OrchestratorContext): AgentTool<any> {
   };
 }
 
-function createSearchGoogleTool(): AgentTool<any> {
-  const schema = Type.Object({
-    query: Type.String({ description: "Search query" }),
-  });
-
-  return {
-    name: "search_google",
-    label: "Google Search",
-    description:
-      "Search Google for information. Use for quick factual lookups. " +
-      "For complex research tasks, use decompose_task instead.",
-    parameters: schema,
-    execute: async (
-      _toolCallId: string,
-      params: any,
-    ): Promise<AgentToolResult<undefined>> => {
-      // TODO: Phase 4 — implement real Google Custom Search API call
-      return {
-        content: [
-          {
-            type: "text",
-            text: `[search_google not yet implemented] Query: ${params.query}`,
-          },
-        ],
-        details: undefined,
-      };
-    },
-  };
-}
+// search_google: uses the real implementation from search-tools.ts
+// (Google Custom Search API with DuckDuckGo fallback)
 
 // ===== Orchestrator Context =====
 
@@ -536,6 +514,8 @@ interface OrchestratorContext {
   decomposeWorkspaceFolder: string;
   resumeTaskId?: string;
   attachedFiles: string[];
+  /** Set by OrchestratorSession so decompose_task can abort the agent mid-turn. */
+  agent: Agent | null;
 }
 
 // ===== OrchestratorSession =====
@@ -590,6 +570,7 @@ export class OrchestratorSession {
       decomposeTaskDescription: "",
       decomposeWorkspaceFolder: "",
       attachedFiles: [],
+      agent: null,
     };
   }
 
@@ -627,6 +608,7 @@ export class OrchestratorSession {
       // 5. Create or update agent
       if (!this.agent) {
         this.agent = this.createOrchestratorAgent(systemPrompt);
+        this.ctx.agent = this.agent;
       } else {
         // Update system prompt for existing agent
         this.agent.state.systemPrompt = systemPrompt;
@@ -667,9 +649,23 @@ export class OrchestratorSession {
         unsubscribe();
       }
 
-      // 7b. Check for agent error (API failure, auth error, etc.)
-      // The bridge already emitted SSE error; here we surface it as a reply.
-      if (this.agent.state.error) {
+      // 7b. Handle decompose_task abort or real errors.
+      // decompose_task calls agent.abort() to stop further tool calls.
+      // This sets agent.state.error, but it's intentional — not a real error.
+      // Check decomposePending FIRST to distinguish from actual failures.
+      if (this.ctx.decomposePending) {
+        // Clear the abort error from agent history so next turn works cleanly
+        if (this.agent.state.error) {
+          this.agent.state.error = undefined as any;
+          const msgs = this.agent.state.messages;
+          if (msgs.length > 0) {
+            const last = msgs[msgs.length - 1] as any;
+            if (last.role === "assistant" && (last.stopReason === "aborted" || last.stopReason === "error")) {
+              msgs.pop();
+            }
+          }
+        }
+      } else if (this.agent.state.error) {
         const errorMsg = this.agent.state.error;
         logger.error({ error: errorMsg }, "Orchestrator agent error");
 
@@ -694,7 +690,7 @@ export class OrchestratorSession {
         continue;
       }
 
-      // 7. Extract reply
+      // 7c. Extract reply
       const reply = this.extractLastAssistantText(this.agent);
 
       // 8. Handle decompose_task trigger
@@ -802,7 +798,7 @@ export class OrchestratorSession {
 
     const tools: AgentTool<any>[] = [
       shellExecTool,
-      createSearchGoogleTool(),
+      ...createSearchTools(),
       createAskHumanTool(this.ctx),
       createAttachFileTool(this.ctx),
       createDecomposeTaskTool(this.ctx),
@@ -828,7 +824,7 @@ export class OrchestratorSession {
         }
         return undefined;
       },
-      streamFn: streamSimple,
+      streamFn: debugStreamSimple,
     });
 
     return agent;
@@ -845,12 +841,23 @@ export class OrchestratorSession {
     const executorId = `exec_${this.executorCounter}`;
     const taskLabel = taskDescription.slice(0, 20).trim();
 
+    // Resolve workspace path: workspaceFolder is a relative subdirectory name
+    // (e.g. "product-hunt-weekly-top10") from decompose_task. Join with the
+    // task's base workspace (this.workspaceDir) to get an absolute path.
+    // If empty, use the base workspace directly.
+    const { join: pathJoin } = await import("node:path");
+    const { mkdirSync } = await import("node:fs");
+    const resolvedWorkspace = workspaceFolder
+      ? pathJoin(this.workspaceDir, workspaceFolder)
+      : this.workspaceDir;
+    mkdirSync(resolvedWorkspace, { recursive: true });
+
     const abortController = new AbortController();
 
     const promise = trackPromise(
       this.planAndExecute(
         taskDescription,
-        workspaceFolder,
+        resolvedWorkspace,
         executorId,
         taskLabel,
         resumeTaskId,
@@ -865,7 +872,7 @@ export class OrchestratorSession {
       abortController,
       subtasks: [],
       startedAt: new Date(),
-      workspaceFolder,
+      workspaceFolder: resolvedWorkspace,
     };
 
     this.runningExecutors.set(executorId, handle);
@@ -989,7 +996,7 @@ export class OrchestratorSession {
     const agentTools = new Map<string, AgentTool<any>[]>();
     const systemPrompts = new Map<string, string>();
 
-    const promptVars = getDefaultPromptVars(this.workspaceDir);
+    const promptVars = getDefaultPromptVars(workspaceFolder);
 
     for (const agentType of agentTypes) {
       if (this.childAgentToolsFactory) {
@@ -1026,6 +1033,11 @@ export class OrchestratorSession {
       executorId,
       taskLabel,
       userId: this.taskState.userId,
+      workspaceDir: workspaceFolder,
+      childAgentToolsFactory: this.childAgentToolsFactory
+        ? (agentType: string, sessionId: string) =>
+            this.childAgentToolsFactory!(agentType as AgentType, sessionId)
+        : undefined,
     });
 
     executor.setSubtasks(subtasks);
