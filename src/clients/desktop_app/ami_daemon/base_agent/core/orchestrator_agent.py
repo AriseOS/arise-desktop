@@ -266,8 +266,9 @@ class InjectMessageTool:
 
     def inject_message(self, executor_id: str, message: str) -> str:
         """
-        Send a message to a running executor's child agent.
-        The agent will receive this as a steering message during its next tool call.
+        Send a message to all running agents in an executor.
+        Each agent will receive this as a steering message during its next tool call.
+        In parallel execution, multiple agents may be running simultaneously.
 
         Args:
             executor_id: ID of the target executor (e.g., "exec_1")
@@ -287,14 +288,16 @@ class InjectMessageTool:
         if handle.executor is None:
             return f"Executor {executor_id} is still in planning phase, cannot inject messages yet"
 
-        agent = handle.executor.get_current_agent()
-        if not agent:
+        running_agents = handle.executor.get_running_agents()
+        if not running_agents:
             return f"Executor {executor_id} exists but no agent is currently active"
 
-        # Inject directly into the agent's per-agent steering queue
-        # (bypasses the shared TaskState queue used by OrchestratorSession)
-        agent.inject_steering_message(message)
-        return f"Message injected to executor {executor_id} ({handle.task_label})"
+        # Broadcast to all running agents
+        for subtask_id, agent in running_agents.items():
+            agent.inject_steering_message(message)
+
+        count = len(running_agents)
+        return f"Message injected to {count} running agent(s) in executor {executor_id} ({handle.task_label})"
 
 
 class CancelTaskTool:
@@ -534,8 +537,10 @@ class OrchestratorSession:
         self._running_executors: Dict[str, ExecutorHandle] = {}
         self._executor_counter = 0
         # Sequential execution lock: only one executor runs at a time.
-        # Additional decompose_task calls queue up and wait.
-        # This prevents browser tab state conflicts from parallel executors.
+        # Parallel subtasks within a single executor share the Electron
+        # WebView pool. Running two executors simultaneously could exhaust
+        # the pool. Planning runs outside the lock so multiple
+        # decompose_task calls can plan concurrently.
         self._executor_lock = asyncio.Lock()
 
         # Dependencies (injected from QuickTaskService)
@@ -706,7 +711,8 @@ class OrchestratorSession:
 
         Runs entirely in the background. Emits SSE events for planning
         progress (DecomposeProgressData, TaskDecomposedData, etc.) and
-        then acquires _executor_lock to run the executor sequentially.
+        then acquires _executor_lock to run the executor (subtasks
+        dispatch in parallel within the executor).
 
         Returns:
             Executor result dict (completed/failed/total counts).
@@ -842,7 +848,10 @@ class OrchestratorSession:
                 f"[OrchestratorSession] Created child workspace: {child_manager.workspace}"
             )
 
-        # --- Phase 2: Execution (sequential via lock) ---
+        # --- Phase 2: Execution (lock ensures only one executor runs at a time) ---
+        # Planning (Phase 1) runs outside the lock so multiple decompose_task
+        # calls can plan concurrently. But execution must be serialized because
+        # the 8-page Electron WebView pool is shared across all executors.
         async with self._executor_lock:
             logger.info(f"[OrchestratorSession] Executor {executor_id} acquired lock, starting")
             active_manager = child_manager or parent_manager

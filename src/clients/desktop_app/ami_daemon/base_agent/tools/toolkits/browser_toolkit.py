@@ -10,6 +10,7 @@ All methods are async to work properly in async execution contexts.
 import asyncio
 import base64
 import logging
+import uuid
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from .base_toolkit import BaseToolkit, FunctionTool
@@ -1340,6 +1341,36 @@ class BrowserToolkit(BaseToolkit):
 
         logger.info(f"Returning {len(enabled_tools)} enabled browser tools")
         return enabled_tools
+
+    def clone_for_new_session(self, new_session_id: str | None = None) -> "BrowserToolkit":
+        """Create a clone with an independent browser session.
+
+        The clone gets a new session_id so it resolves to a different
+        HybridBrowserSession (and thus a different Electron pool page).
+        All other configuration is copied from the original.
+
+        Args:
+            new_session_id: Session ID for the clone. Auto-generated if None.
+
+        Returns:
+            New BrowserToolkit instance with independent session.
+        """
+        if new_session_id is None:
+            new_session_id = str(uuid.uuid4())[:8]
+
+        clone = BrowserToolkit(
+            session_id=new_session_id,
+            headless=self._headless,
+            user_data_dir=self._user_data_dir,
+            timeout=self.timeout,
+            return_snapshot=self._return_snapshot,
+            enabled_tools=self._enabled_tools.copy(),
+        )
+        clone._task_state = self._task_state
+        logger.info(
+            f"BrowserToolkit cloned: {self._session_id} -> {new_session_id}"
+        )
+        return clone
 
     @classmethod
     def toolkit_name(cls) -> str:

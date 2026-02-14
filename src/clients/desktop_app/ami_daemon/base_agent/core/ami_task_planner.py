@@ -80,7 +80,11 @@ FINE_GRAINED_DECOMPOSE_PROMPT = r"""You are a task decomposer. Convert a user's 
 
 4. **Dependencies**: Only add depends_on when there is real data dependency. Independent tasks should NOT have depends_on (allows parallel execution).
 
-5. **Final Deliverable**: The last task should produce a user-friendly output.
+5. **Data Parallelism**: When the task involves processing N independent items (e.g., "compare 5 products", "scrape 3 websites", "check prices on 10 stores"), create one subtask PER ITEM with NO depends_on between them. They will execute in parallel.
+   - Good: 10 independent browser subtasks, each searching one product
+   - Bad: 1 subtask that searches all 10 products sequentially
+
+6. **Final Deliverable**: The last task should produce a user-friendly output.
    - Prefer: HTML, Excel (.xlsx), CSV, Word (.docx), PowerPoint (.pptx)
    - Markdown (.md) is for intermediate notes only, NEVER as final deliverable
    - Simple questions need only a text reply, no file

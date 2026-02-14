@@ -282,7 +282,7 @@ export class BrowserSession {
       }
     }
 
-    throw new Error("No pool pages available — all 8 WebContentsViews are in use");
+    throw new Error("No pool pages available — all WebContentsViews are in use");
   }
 
   private async _returnPageToPool(page: Page): Promise<void> {

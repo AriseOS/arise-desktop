@@ -761,7 +761,7 @@ class HybridBrowserSession:
                 await asyncio.sleep(3)
 
         raise RuntimeError(
-            "No pool pages available (all 8 WebView slots are in use). "
+            "No pool pages available (all WebView slots are in use). "
             "Wait for a running browser task to finish before starting a new one."
         )
 

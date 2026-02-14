@@ -22,7 +22,7 @@ export const BrowserConfig = {
   viewportHeight: 1080,
 
   // Pool
-  poolSize: 8,
+  poolSize: 16,
   poolMarkerUrl: "about:blank?ami=pool",
 
   // Retry

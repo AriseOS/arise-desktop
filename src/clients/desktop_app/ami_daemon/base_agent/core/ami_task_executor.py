@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .ami_agent import AMIAgent
+    from .ami_browser_agent import AMIBrowserAgent
 
 from ..events import (
     SubtaskStateData,
@@ -61,11 +62,16 @@ Before splitting, **save all data you have collected so far to a file**.
 
 3. **Atomic**: Each task should be a small, focused unit of work (1-2 tool calls). Browser: one navigation or one data extraction. Document: one file operation.
 
-4. **Parallel by Default**: Tasks that don't depend on each other's output MUST NOT have dependencies. When processing multiple items, create one task per item or small batch — they can all run in parallel.
+4. **Parallel by Default**: Independent tasks run in PARALLEL on separate browser instances (up to 6 at once). Tasks that don't depend on each other's output MUST NOT have dependencies. When processing multiple items, create one task per item — they execute simultaneously.
+   - Good: 8 independent browser tasks, each extracting one product → all run at the same time
+   - Bad: 1 task that extracts all 8 products sequentially
 
-5. **Strategic Grouping**: Sequential actions of the same type that MUST happen in order should be grouped into one task. Do not split what naturally belongs together (e.g., navigate to a page + extract data from it = one task).
+5. **Dependencies for Consolidation**: If you need a final task to merge/consolidate results from parallel tasks, use `depends_on` to list the task indices it waits for.
+   - Example: 3 extraction tasks (indices 1,2,3) + 1 consolidation task (index 4, depends_on [1,2,3])
 
-6. **Preserve the Full Goal**: Your split must cover ALL remaining work. Do not drop final steps like consolidating results, creating a report, or producing the final deliverable.
+6. **Strategic Grouping**: Sequential actions of the same type that MUST happen in order should be grouped into one task. Do not split what naturally belongs together (e.g., navigate to a page + extract data from it = one task).
+
+7. **Preserve the Full Goal**: Your split must cover ALL remaining work. Do not drop final steps like consolidating results, creating a report, or producing the final deliverable.
 """.strip()
 
 
@@ -101,22 +107,111 @@ class AMISubtask:
     retry_count: int = 0
 
 
+MAX_PARALLEL_SUBTASKS = 10  # Pool has 16 WebContentsViews; reserve some for user browsing
+
+
+class _AgentPool:
+    """Pool of reusable agent clones for parallel subtask execution.
+
+    Browser agents are cloned with independent_session=True so each gets
+    its own HybridBrowserSession (and thus its own Electron pool page).
+    Non-browser agents are cloned normally (shared tools, fresh state).
+
+    Pool size is capped at MAX_PARALLEL_SUBTASKS per type to avoid
+    accumulating too many clones (each browser clone holds a pool page).
+    """
+
+    def __init__(self, base_agents: Dict[str, "AMIAgent"]):
+        self._base_agents = base_agents
+        self._available: Dict[str, List["AMIAgent"]] = {k: [] for k in base_agents}
+        self._lock = asyncio.Lock()
+
+    async def borrow(self, agent_type: str) -> "AMIAgent":
+        """Borrow an agent from the pool, creating one if needed."""
+        if agent_type not in self._base_agents:
+            raise ValueError(f"No agent registered for type '{agent_type}'")
+
+        async with self._lock:
+            pool = self._available.get(agent_type, [])
+            if pool:
+                agent = pool.pop()
+                agent.reset()
+                return agent
+
+        # Create outside lock (may involve I/O)
+        base = self._base_agents[agent_type]
+        from .ami_browser_agent import AMIBrowserAgent
+        if isinstance(base, AMIBrowserAgent):
+            return base.clone(independent_session=True)
+        return base.clone()
+
+    async def release(self, agent_type: str, agent: "AMIAgent") -> None:
+        """Return an agent to the pool for reuse.
+
+        If the pool is full, close the agent's browser session instead
+        of pooling it to avoid holding too many Electron pool pages.
+        """
+        session_to_close = None
+        async with self._lock:
+            if agent_type not in self._available:
+                self._available[agent_type] = []
+
+            if len(self._available[agent_type]) >= MAX_PARALLEL_SUBTASKS:
+                # Pool is full — extract session ref, close outside lock
+                try:
+                    tool = agent.get_tool("browser_get_page_snapshot")
+                    if tool:
+                        toolkit = tool.func.__self__
+                        session_to_close = toolkit._session
+                except Exception:
+                    pass
+            else:
+                self._available[agent_type].append(agent)
+
+        # Close outside lock to avoid blocking borrow/release during I/O
+        if session_to_close:
+            try:
+                await session_to_close.close()
+            except Exception as e:
+                logger.debug(f"[_AgentPool] Failed to close excess agent session: {e}")
+
+    async def cleanup(self) -> None:
+        """Close all pooled agents' browser sessions (release pool pages)."""
+        sessions_to_close = []
+        async with self._lock:
+            for agent_type, agents in self._available.items():
+                for agent in agents:
+                    try:
+                        tool = agent.get_tool("browser_get_page_snapshot")
+                        if tool:
+                            toolkit = tool.func.__self__
+                            session = toolkit._session
+                            if session:
+                                sessions_to_close.append(session)
+                    except Exception as e:
+                        logger.debug(f"[_AgentPool] Cleanup error collecting session: {e}")
+                agents.clear()
+
+        # Close outside lock to avoid blocking borrow/release during I/O
+        for session in sessions_to_close:
+            try:
+                await session.close()
+            except Exception as e:
+                logger.debug(f"[_AgentPool] Cleanup error closing session: {e}")
+
+
 class AMITaskExecutor:
     """
-    Task executor that replaces CAMEL Workforce.
+    Task executor with parallel subtask dispatch.
 
     Key features:
-    - workflow_guide is injected as an explicit instruction in the prompt
-    - Sequential execution with dependency resolution
+    - Parallel execution: eligible subtasks (no unmet dependencies) run concurrently
+    - Agent pooling: browser agents cloned with independent sessions for parallel use
+    - Semaphore-bounded concurrency (MAX_PARALLEL_SUBTASKS = 6)
+    - workflow_guide injected as explicit instruction in the prompt
+    - Dependency resolution with fail-fast propagation
     - SSE events for real-time UI updates
     - Pause/resume for multi-turn conversations
-    - Simple retry logic
-
-    Unlike CAMEL Workforce:
-    - No agent pooling or cloning
-    - No complex coordinator agent
-    - Direct control over prompt format
-    - ~250 lines vs ~6000 lines
     """
 
     def __init__(
@@ -155,12 +250,13 @@ class AMITaskExecutor:
         self.executor_id = executor_id
         self.task_label = task_label
 
-        # Track the currently executing agent (for message injection)
-        self._current_agent: Optional["AMIAgent"] = None
+        # Track running agents by subtask_id (for message injection)
+        self._running_agents: Dict[str, "AMIAgent"] = {}
 
         # Subtask management
         self._subtasks: List[AMISubtask] = []
         self._subtask_map: Dict[str, AMISubtask] = {}
+        self._subtask_lock = asyncio.Lock()  # Protects _subtasks/_subtask_map during dynamic replan
 
         # Pause/resume control
         self._paused = False
@@ -180,8 +276,14 @@ class AMITaskExecutor:
         return getattr(self._task_state, 'user_language', 'en') if self._task_state else 'en'
 
     def get_current_agent(self) -> Optional["AMIAgent"]:
-        """Get the agent currently executing a subtask (for message injection)."""
-        return self._current_agent
+        """Get one of the currently running agents (for backward compatibility)."""
+        if self._running_agents:
+            return next(iter(self._running_agents.values()))
+        return None
+
+    def get_running_agents(self) -> Dict[str, "AMIAgent"]:
+        """Get all currently running agents keyed by subtask_id."""
+        return dict(self._running_agents)
 
     def set_subtasks(self, subtasks: List[AMISubtask]) -> None:
         """Set subtasks to execute."""
@@ -213,30 +315,31 @@ class AMITaskExecutor:
         Returns:
             List of new subtask IDs.
         """
-        # Find insertion position: after the specified subtask AND after any
-        # previously inserted dynamic subtasks (those whose ID starts with
-        # the parent's ID + "_dyn_"). This ensures multiple add_subtasks_async
-        # calls append in chronological order.
-        insert_idx = len(self._subtasks)
-        if after_subtask_id:
-            dyn_prefix = f"{after_subtask_id}_dyn_"
-            found = False
-            for i, s in enumerate(self._subtasks):
-                if s.id == after_subtask_id:
-                    found = True
-                    insert_idx = i + 1
-                elif found and s.id.startswith(dyn_prefix):
-                    # Skip past existing dynamic subtasks from the same parent
-                    insert_idx = i + 1
-                elif found:
-                    # First non-dynamic subtask — insert here
-                    insert_idx = i
-                    break
+        async with self._subtask_lock:
+            # Find insertion position: after the specified subtask AND after any
+            # previously inserted dynamic subtasks (those whose ID starts with
+            # the parent's ID + "_dyn_"). This ensures multiple add_subtasks_async
+            # calls append in chronological order.
+            insert_idx = len(self._subtasks)
+            if after_subtask_id:
+                dyn_prefix = f"{after_subtask_id}_dyn_"
+                found = False
+                for i, s in enumerate(self._subtasks):
+                    if s.id == after_subtask_id:
+                        found = True
+                        insert_idx = i + 1
+                    elif found and s.id.startswith(dyn_prefix):
+                        # Skip past existing dynamic subtasks from the same parent
+                        insert_idx = i + 1
+                    elif found:
+                        # First non-dynamic subtask — insert here
+                        insert_idx = i
+                        break
 
-        # Insert into list and update map
-        for i, subtask in enumerate(new_subtasks):
-            self._subtasks.insert(insert_idx + i, subtask)
-            self._subtask_map[subtask.id] = subtask
+            # Insert into list and update map
+            for i, subtask in enumerate(new_subtasks):
+                self._subtasks.insert(insert_idx + i, subtask)
+                self._subtask_map[subtask.id] = subtask
 
         new_ids = [s.id for s in new_subtasks]
 
@@ -301,7 +404,12 @@ class AMITaskExecutor:
 
     async def execute(self) -> Dict[str, Any]:
         """
-        Execute all subtasks respecting dependencies.
+        Execute all subtasks respecting dependencies, with parallel dispatch.
+
+        Eligible subtasks (PENDING with all deps DONE) are dispatched in
+        parallel batches, bounded by MAX_PARALLEL_SUBTASKS semaphore.
+        Each parallel browser subtask gets an independent agent clone
+        with its own BrowserToolkit session (via _AgentPool).
 
         Returns:
             Dictionary with execution results:
@@ -317,70 +425,80 @@ class AMITaskExecutor:
         from .execution_data_collector import ExecutionDataCollector
         collector = ExecutionDataCollector()
 
+        agent_pool = _AgentPool(self._agents)
+        semaphore = asyncio.Semaphore(MAX_PARALLEL_SUBTASKS)
+
         completed = 0
         failed = 0
         _emitted_failures = set()  # Track subtasks whose FAILED state has been emitted
 
-        while not self._stopped:
-            # Wait if paused
-            await self._wait_if_paused()
+        try:
+            while not self._stopped:
+                await self._wait_if_paused()
 
-            if self._stopped:
-                break
+                if self._stopped:
+                    break
 
-            # Emit SSE events for subtasks that were fail-fast marked in _get_next_subtask
-            newly_failed = [
-                s for s in self._subtasks
-                if s.state == SubtaskState.FAILED and s not in _emitted_failures
-            ]
-            for s in newly_failed:
-                _emitted_failures.add(s)
-                failed += 1
-                await self._emit_subtask_state(s)
-
-            # Find next executable subtask (dependencies satisfied)
-            subtask = self._get_next_subtask()
-
-            # Emit again after _get_next_subtask (it may have marked more subtasks FAILED)
-            newly_failed = [
-                s for s in self._subtasks
-                if s.state == SubtaskState.FAILED and s not in _emitted_failures
-            ]
-            for s in newly_failed:
-                _emitted_failures.add(s)
-                failed += 1
-                await self._emit_subtask_state(s)
-
-            if subtask is None:
-                # Check if there are stuck PENDING subtasks (deadlock detection)
-                stuck = [
+                # Emit SSE events for newly failed subtasks (fail-fast propagation)
+                newly_failed = [
                     s for s in self._subtasks
-                    if s.state == SubtaskState.PENDING
+                    if s.state == SubtaskState.FAILED and s not in _emitted_failures
                 ]
-                if stuck:
-                    stuck_ids = [s.id for s in stuck]
-                    logger.warning(
-                        f"[AMITaskExecutor] {len(stuck)} subtasks stuck PENDING "
-                        f"(unresolvable dependencies or circular): "
-                        f"{stuck_ids}"
-                    )
-                    for s in stuck:
-                        s.state = SubtaskState.FAILED
-                        s.error = "Blocked: circular dependency"
+                for s in newly_failed:
+                    _emitted_failures.add(s)
+                    failed += 1
+                    await self._emit_subtask_state(s)
+
+                # Find all eligible subtasks for this batch
+                eligible = self._get_all_eligible_subtasks()
+
+                # Emit failures discovered during eligibility check
+                newly_failed = [
+                    s for s in self._subtasks
+                    if s.state == SubtaskState.FAILED and s not in _emitted_failures
+                ]
+                for s in newly_failed:
+                    _emitted_failures.add(s)
+                    failed += 1
+                    await self._emit_subtask_state(s)
+
+                if not eligible:
+                    # Check for stuck PENDING subtasks (deadlock detection)
+                    stuck = [
+                        s for s in self._subtasks
+                        if s.state == SubtaskState.PENDING
+                    ]
+                    if stuck:
+                        stuck_ids = [s.id for s in stuck]
+                        logger.warning(
+                            f"[AMITaskExecutor] {len(stuck)} subtasks stuck PENDING "
+                            f"(unresolvable dependencies or circular): "
+                            f"{stuck_ids}"
+                        )
+                        for s in stuck:
+                            s.state = SubtaskState.FAILED
+                            s.error = "Blocked: circular dependency"
+                            failed += 1
+                            _emitted_failures.add(s)
+                            await self._emit_subtask_state(s)
+                    break
+
+                # Dispatch eligible subtasks in parallel
+                results = await self._execute_batch(
+                    eligible, agent_pool, semaphore, collector
+                )
+                for subtask, success in zip(eligible, results):
+                    if success:
+                        completed += 1
+                    else:
                         failed += 1
-                        _emitted_failures.add(s)
-                        await self._emit_subtask_state(s)
-                break
+                    # Mark batch subtasks as emitted so they aren't
+                    # double-counted by the newly_failed check above
+                    if subtask.state == SubtaskState.FAILED:
+                        _emitted_failures.add(subtask)
 
-            # Execute the subtask
-            success = await self._execute_subtask(subtask, collector)
-
-            if success:
-                completed += 1
-            else:
-                failed += 1
-                # Continue with other subtasks even if one fails
-                # (unless they depend on the failed one)
+        finally:
+            await agent_pool.cleanup()
 
         result = {
             "completed": completed,
@@ -400,36 +518,39 @@ class AMITaskExecutor:
 
         return result
 
-    def _get_next_subtask(self) -> Optional[AMISubtask]:
+    def _get_all_eligible_subtasks(self) -> List[AMISubtask]:
         """
-        Get the next subtask that can be executed.
+        Get ALL subtasks that can be executed right now.
 
-        A subtask can execute if:
+        A subtask is eligible if:
         - Its state is PENDING
         - All its dependencies are DONE
 
         If a dependency FAILED, immediately fail the downstream subtask
-        (don't wait for deadlock detection).
+        (fail-fast propagation).
 
-        Returns None if no executable subtask found.
+        Returns list of eligible subtasks (may be empty).
         """
+        eligible = []
+
         for subtask in self._subtasks:
             if subtask.state != SubtaskState.PENDING:
                 continue
 
-            # Check if all dependencies are satisfied
             deps_satisfied = True
             for dep_id in subtask.depends_on:
                 dep = self._subtask_map.get(dep_id)
                 if dep is None:
+                    subtask.state = SubtaskState.FAILED
+                    subtask.error = (
+                        f"Depends on non-existent task '{dep_id}'"
+                    )
                     logger.warning(
-                        f"[AMITaskExecutor] Subtask {subtask.id} depends on "
-                        f"non-existent task '{dep_id}'. Marking as blocked."
+                        f"[AMITaskExecutor] Subtask {subtask.id} failed: {subtask.error}"
                     )
                     deps_satisfied = False
                     break
                 if dep.state == SubtaskState.FAILED:
-                    # Fail fast: propagate failure to downstream subtask
                     subtask.state = SubtaskState.FAILED
                     subtask.error = (
                         f"Dependency '{dep_id}' failed: {dep.error or 'unknown error'}"
@@ -444,11 +565,72 @@ class AMITaskExecutor:
                     break
 
             if deps_satisfied:
-                return subtask
+                eligible.append(subtask)
 
-        return None
+        if len(eligible) > 1:
+            logger.info(
+                f"[AMITaskExecutor] {len(eligible)} subtasks eligible for parallel execution: "
+                f"{[s.id for s in eligible]}"
+            )
 
-    async def _execute_subtask(self, subtask: AMISubtask, collector=None) -> bool:
+        return eligible
+
+    async def _execute_batch(
+        self,
+        subtasks: List[AMISubtask],
+        agent_pool: "_AgentPool",
+        semaphore: asyncio.Semaphore,
+        collector,
+    ) -> List[bool]:
+        """Execute a batch of subtasks in parallel.
+
+        Each subtask borrows an agent from the pool, executes, then
+        returns the agent. The semaphore limits concurrency.
+        """
+        async def _run_one(subtask: AMISubtask) -> bool:
+            async with semaphore:
+                if self._stopped:
+                    return False
+                agent = None
+                try:
+                    agent = await agent_pool.borrow(subtask.agent_type)
+                    return await self._execute_subtask(subtask, collector, agent=agent)
+                except asyncio.CancelledError:
+                    # Task was cancelled (e.g., user cancel). Mark subtask
+                    # so it doesn't stay RUNNING in final status reports.
+                    if subtask.state == SubtaskState.RUNNING:
+                        subtask.state = SubtaskState.FAILED
+                        subtask.error = "Cancelled"
+                    raise  # Re-raise so asyncio.gather sees cancellation
+                except Exception as e:
+                    # Ensure subtask is marked FAILED on any uncaught exception
+                    if subtask.state not in (SubtaskState.DONE, SubtaskState.FAILED):
+                        subtask.state = SubtaskState.FAILED
+                        subtask.error = f"Unexpected error: {e}"
+                        await self._emit_subtask_state(subtask)
+                    logger.error(
+                        f"[AMITaskExecutor] Subtask {subtask.id} uncaught error: {e}",
+                        exc_info=True,
+                    )
+                    return False
+                finally:
+                    if agent is not None:
+                        await self._cleanup_subtask_tabs(agent)
+                        await agent_pool.release(subtask.agent_type, agent)
+
+        tasks = [asyncio.create_task(_run_one(s)) for s in subtasks]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        processed = []
+        for r in results:
+            if isinstance(r, BaseException):
+                logger.error(f"[AMITaskExecutor] Batch subtask exception: {r}")
+                processed.append(False)
+            else:
+                processed.append(r)
+        return processed
+
+    async def _execute_subtask(self, subtask: AMISubtask, collector=None, agent: Optional["AMIAgent"] = None) -> bool:
         """
         Execute a single subtask using astep().
 
@@ -459,12 +641,14 @@ class AMITaskExecutor:
         Args:
             subtask: The subtask to execute.
             collector: Optional ExecutionDataCollector to record execution data.
+            agent: Optional agent to use. If None, uses self._agents[subtask.agent_type].
 
         Returns:
             True if successful, False otherwise.
         """
         # Get the appropriate agent
-        agent = self._agents.get(subtask.agent_type)
+        if agent is None:
+            agent = self._agents.get(subtask.agent_type)
         if agent is None:
             logger.error(
                 f"[AMITaskExecutor] No agent for type: {subtask.agent_type}"
@@ -496,8 +680,8 @@ class AMITaskExecutor:
         # to avoid accumulating operations from failed attempts.
         recorder = None
 
-        # Track current agent for message injection
-        self._current_agent = agent
+        # Track running agent for message injection
+        self._running_agents[subtask.id] = agent
 
         # Execute with retries
         try:
@@ -510,7 +694,7 @@ class AMITaskExecutor:
 
                     # Online Learning: fresh recorder for each attempt
                     if subtask.agent_type == "browser":
-                        recorder = await self._start_behavior_recorder()
+                        recorder = await self._start_behavior_recorder(agent=agent)
 
                     # Reset handoff state on each attempt to prevent stale data
                     # from a failed previous attempt leaking into the retry
@@ -615,31 +799,39 @@ class AMITaskExecutor:
             return False
 
         finally:
-            # Clear current agent tracking
-            self._current_agent = None
+            # Clear running agent tracking
+            self._running_agents.pop(subtask.id, None)
             # Online Learning: stop recorder to release CDP session
             if recorder:
                 await self._stop_behavior_recorder(recorder)
                 recorder = None
             # Always clean up replan tools to prevent leaking between subtasks
             self._remove_replan_tools(agent)
-            # Tab cleanup: close all non-current tabs to prevent accumulation
-            await self._cleanup_subtask_tabs(agent)
+            # Note: tab cleanup is handled by the caller (_execute_batch)
+            # when using parallel execution. For single subtask execution
+            # (backward compat), cleanup is done in _execute_batch's finally.
 
     async def _get_browser_context(self, agent: "AMIAgent") -> Optional[str]:
         """Get current browser page URL and title if agent has browser tools.
 
         Returns a lightweight context string (URL + title only, no full snapshot)
         so the agent knows where the browser is without wasting tokens.
+
+        Skips context capture if the session hasn't been initialized yet
+        (e.g., fresh agent clone with independent_session) to avoid
+        prematurely claiming a pool page for an empty about:blank page.
         """
         snapshot_tool = agent.get_tool("browser_get_page_snapshot")
         if snapshot_tool is None:
             return None
 
         try:
-            # Call the underlying toolkit method to get just page context.
-            # The tool's func is a bound method on BrowserToolkit.
             toolkit = snapshot_tool.func.__self__
+            # Skip if no session exists yet — the agent will create one
+            # when it actually navigates. Capturing context from an
+            # uninitialized session just returns about:blank.
+            if toolkit._session is None:
+                return None
             context = await toolkit._get_page_context()
             if context:
                 logger.info(f"[AMITaskExecutor] Browser context captured: {context[:120]}")
@@ -653,11 +845,13 @@ class AMITaskExecutor:
     # =========================================================================
 
     async def _cleanup_subtask_tabs(self, agent: "AMIAgent") -> None:
-        """Close all tabs except the current active tab.
+        """Close extra tabs in the agent's browser session, keeping one.
 
-        Called after each subtask to prevent tab accumulation during
-        long multi-subtask executions. Only the current active tab is
-        preserved so the next subtask can continue from the same page.
+        Each parallel agent has its own session. After the subtask completes,
+        close all tabs except one to release Electron pool pages. We keep one
+        tab alive so the session remains usable if the agent is reused from
+        the pool (avoids _ensure_valid_page fallback to context.new_page()).
+        The kept tab is navigated to about:blank to clear state.
         """
         tool = agent.get_tool("browser_get_page_snapshot")
         if tool is None:
@@ -670,23 +864,32 @@ class AMITaskExecutor:
 
         try:
             tab_info = await session.get_tab_info()
-            current_tab_id = session._current_tab_id
-
-            tabs_to_close = [
-                t["tab_id"] for t in tab_info
-                if t["tab_id"] != current_tab_id
-            ]
-
-            if not tabs_to_close:
+            if not tab_info:
                 return
 
-            for tab_id in tabs_to_close:
-                await session.close_tab(tab_id)
+            # Keep the current tab, close the rest
+            current_tab_id = session._current_tab_id
+            tabs_to_close = [t for t in tab_info if t["tab_id"] != current_tab_id]
 
-            logger.info(
-                f"[AMITaskExecutor] Tab cleanup: closed {len(tabs_to_close)} tabs "
-                f"(kept current: {current_tab_id})"
-            )
+            for tab in tabs_to_close:
+                try:
+                    await session.close_tab(tab["tab_id"])
+                except Exception:
+                    pass
+
+            # Navigate the kept tab to about:blank to clear state
+            if session._page and not session._page.is_closed():
+                try:
+                    await session._page.goto("about:blank")
+                except Exception:
+                    pass
+
+            closed = len(tabs_to_close)
+            if closed > 0:
+                logger.info(
+                    f"[AMITaskExecutor] Tab cleanup: closed {closed} extra tabs, "
+                    f"kept 1 (session={toolkit._session_id})"
+                )
         except Exception as e:
             logger.warning(f"[AMITaskExecutor] Tab cleanup failed: {e}")
 
@@ -694,17 +897,30 @@ class AMITaskExecutor:
     # Online Learning (BehaviorRecorder)
     # =========================================================================
 
-    async def _start_behavior_recorder(self):
+    async def _start_behavior_recorder(self, agent: Optional["AMIAgent"] = None):
         """Start BehaviorRecorder for a browser subtask.
+
+        When an agent is provided, gets the session from its BrowserToolkit
+        (necessary for parallel execution where each agent has its own session).
+        Falls back to task_id-based session lookup for backward compatibility.
 
         Returns the recorder instance, or None if startup fails.
         All errors are caught — recorder failure must not block task execution.
         """
         try:
             from ..tools.eigent_browser.behavior_recorder import BehaviorRecorder
-            from ..tools.eigent_browser.browser_session import HybridBrowserSession
 
-            session = await HybridBrowserSession.get_session(session_id=self.task_id)
+            session = None
+            if agent:
+                tool = agent.get_tool("browser_get_page_snapshot")
+                if tool:
+                    toolkit = tool.func.__self__
+                    session = await toolkit._get_session()
+
+            if session is None:
+                from ..tools.eigent_browser.browser_session import HybridBrowserSession
+                session = await HybridBrowserSession.get_session(session_id=self.task_id)
+
             recorder = BehaviorRecorder(enable_snapshot_capture=False)
             await recorder.start_recording(session)
             logger.info("[OnlineLearning] Recorder started")

@@ -7,7 +7,7 @@
 const { WebContentsView, session } = require('electron');
 const { STEALTH_SCRIPT } = require('./stealth.cjs');
 
-const POOL_SIZE = 8;
+const POOL_SIZE = 16;
 const POOL_MARKER = 'about:blank?ami=pool'; // Base marker; actual URLs include &viewId=N
 
 class WebViewManager {

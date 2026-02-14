@@ -95,18 +95,28 @@ class AMIBrowserAgent(AMIAgent):
         self._cached_page_operations_url = None
         self._cached_page_operations_ids = None
 
-    def clone(self) -> "AMIBrowserAgent":
+    def clone(self, independent_session: bool = False) -> "AMIBrowserAgent":
         """Create a lightweight clone sharing provider, tools, and memory toolkit.
 
         Overrides AMIAgent.clone() to preserve browser-agent-specific setup:
         - memory_toolkit (shared, stateless query interface)
+
+        Args:
+            independent_session: If True, the clone gets a new BrowserToolkit
+                with its own session_id, so it connects to a different Electron
+                pool page. Required for parallel subtask execution.
         """
+        if independent_session:
+            tools = self._clone_tools_with_new_browser_session()
+        else:
+            tools = list(self._tools.values())
+
         new_agent = AMIBrowserAgent(
             task_state=self._task_state,
             agent_name=self.agent_name,
             provider=self._provider,
             system_prompt=self._system_prompt,
-            tools=list(self._tools.values()),
+            tools=tools,
             context_token_limit=self._context_token_limit,
             max_iterations=self._max_iterations,
             max_steps=self._max_steps,
@@ -115,7 +125,50 @@ class AMIBrowserAgent(AMIAgent):
             memory_toolkit=self._memory_toolkit,
         )
         new_agent._disable_shared_queue = self._disable_shared_queue
+
+        # Wire BrowserToolkit -> agent for URL change notifications
+        if independent_session:
+            for tool in new_agent._tools.values():
+                bound = getattr(tool.func, '__self__', None)
+                if bound and hasattr(bound, 'set_agent') and hasattr(bound, '_session_id'):
+                    bound.set_agent(new_agent)
+                    break
+
         return new_agent
+
+    def _clone_tools_with_new_browser_session(self) -> list:
+        """Replace browser tools with tools from a cloned BrowserToolkit.
+
+        Finds the BrowserToolkit instance among current tools, creates a
+        clone_for_new_session(), and replaces all browser tool entries with
+        tools from the new toolkit. Non-browser tools are kept as-is.
+        """
+        from ..tools.toolkits.browser_toolkit import BrowserToolkit
+
+        # Find the original BrowserToolkit instance
+        original_toolkit = None
+        browser_tool_names = set()
+        for name, tool in self._tools.items():
+            bound = getattr(tool.func, '__self__', None)
+            if isinstance(bound, BrowserToolkit):
+                if original_toolkit is None:
+                    original_toolkit = bound
+                browser_tool_names.add(name)
+
+        if original_toolkit is None:
+            return list(self._tools.values())
+
+        # Clone the toolkit with a new session
+        new_toolkit = original_toolkit.clone_for_new_session()
+
+        # Build new tools list: non-browser tools + new browser tools
+        new_tools = [
+            tool for name, tool in self._tools.items()
+            if name not in browser_tool_names
+        ]
+        new_tools.extend(new_toolkit.get_tools())
+
+        return new_tools
 
     # =========================================================================
     # Page Operations (URL-triggered async queries)

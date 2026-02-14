@@ -153,10 +153,15 @@ class ReplanToolkit(BaseToolkit):
         You MUST save all collected data to a file BEFORE calling this.
         After this call, STOP immediately — do not continue working.
 
+        Independent tasks run in PARALLEL on separate browser instances.
+        Use depends_on to create a consolidation task that waits for parallel tasks.
+
         Args:
             summary: What you accomplished. This becomes the result for downstream tasks.
             tasks: JSON array of follow-up tasks.
                 Format: [{"content": "task description", "agent_type": "browser"}, ...]
+                Optional: "depends_on": [1, 3] — indices (1-based) of tasks in THIS array
+                that must complete first. Tasks without depends_on run in parallel.
                 agent_type must be one of: browser, document, code, multi_modal
 
         Returns:
@@ -237,22 +242,45 @@ class ReplanToolkit(BaseToolkit):
         self._add_tasks_call_count += 1
         batch = self._add_tasks_call_count
 
-        # Inherit parent's dependencies so dynamic subtasks see the same
-        # upstream context (e.g., product URL list from an earlier subtask).
-        inherited_deps = (parent.depends_on if parent else []) + [self._current_subtask_id]
+        # Base dependencies: all dynamic subtasks depend on the current subtask
+        base_deps = (parent.depends_on if parent else []) + [self._current_subtask_id]
         logger.info(
             f"[ReplanToolkit] Creating dynamic subtasks from '{self._current_subtask_id}': "
             f"parent.depends_on={parent.depends_on if parent else None}, "
-            f"inherited_deps={inherited_deps}"
+            f"base_deps={base_deps}"
         )
+
+        # Build ID map for inter-sibling depends_on references
+        id_prefix = f"{self._current_subtask_id}_dyn_{batch}_"
+        id_map = {i + 1: f"{id_prefix}{i + 1}" for i in range(len(task_list))}
 
         new_subtasks = []
         for i, task in enumerate(task_list):
+            # Start with base deps (parent chain)
+            deps = list(base_deps)
+
+            # Add inter-sibling dependencies if specified
+            # Agent uses 1-based indices into this tasks array
+            sibling_deps = task.get("depends_on", [])
+            if sibling_deps:
+                for idx in sibling_deps:
+                    if isinstance(idx, int) and idx == i + 1:
+                        logger.warning(
+                            f"[ReplanToolkit] Task {i + 1} depends on itself, ignoring"
+                        )
+                    elif isinstance(idx, int) and idx in id_map:
+                        deps.append(id_map[idx])
+                    else:
+                        logger.warning(
+                            f"[ReplanToolkit] Invalid depends_on index {idx} "
+                            f"in task {i + 1} (valid: 1..{len(task_list)})"
+                        )
+
             subtask = AMISubtask(
-                id=f"{self._current_subtask_id}_dyn_{batch}_{i + 1}",
+                id=id_map[i + 1],
                 content=task["content"],
                 agent_type=task["agent_type"],
-                depends_on=list(inherited_deps),
+                depends_on=deps,
                 workflow_guide=parent.workflow_guide if parent else None,
                 memory_level=parent.memory_level if parent else "L3",
             )
