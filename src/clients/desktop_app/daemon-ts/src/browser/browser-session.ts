@@ -227,21 +227,13 @@ export class BrowserSession {
 
   /**
    * Register a claimed pool page as this session's active page.
-   * Sets up viewport, snapshot, executor, and event listeners.
+   * Sets up snapshot, executor, and event listeners.
+   *
+   * No setViewportSize needed — Electron's WebContentsView.setBounds()
+   * controls the CSS layout viewport directly. Off-screen views use
+   * 1920×1080 bounds so the agent gets a full viewport.
    */
   private async _registerClaimedPage(page: Page): Promise<void> {
-    // Set viewport size — CDP-connected pages don't inherit WebContentsView bounds.
-    // Must await: if fire-and-forget, a subsequent page.goto() races with this
-    // and causes ERR_ABORTED.
-    try {
-      await page.setViewportSize({
-        width: BrowserConfig.viewportWidth,
-        height: BrowserConfig.viewportHeight,
-      });
-    } catch (e) {
-      logger.warn({ err: e }, "Failed to set viewport");
-    }
-
     const tabId = nextTabId();
     this._pages.set(tabId, page);
     this._page = page;

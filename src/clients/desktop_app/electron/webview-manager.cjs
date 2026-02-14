@@ -10,6 +10,13 @@ const { STEALTH_SCRIPT } = require('./stealth.cjs');
 const POOL_SIZE = 16;
 const POOL_MARKER = 'about:blank?ami=pool'; // Base marker; actual URLs include &viewId=N
 
+// Off-screen dimensions for agent browsing.
+// Must be full viewport size so that Chromium's CSS layout viewport matches
+// what the agent expects (1920×1080). Position off-screen so the user can't see it.
+// Same approach as Eigent: setBounds({ x: -1919, y: -1079, width: 1920, height: 1080 }).
+const OFFSCREEN_WIDTH = 1920;
+const OFFSCREEN_HEIGHT = 1080;
+
 class WebViewManager {
   constructor(win) {
     this.win = win;
@@ -41,15 +48,15 @@ class WebViewManager {
     // Mute audio
     view.webContents.audioMuted = true;
 
-    // Position off-screen with small dimensions. Chromium's layout viewport
-    // follows setBounds(), so small initial bounds prevent content from being
-    // rendered at a large viewport width while off-screen.
-    const idx = parseInt(id, 10) || 0;
+    // Position off-screen at full viewport dimensions so that Chromium's
+    // CSS layout viewport is 1920×1080 — matching what the agent expects.
+    // No setViewportSize / Emulation.setDeviceMetricsOverride needed;
+    // setBounds alone controls the CSS viewport naturally.
     view.setBounds({
-      x: -9999 + idx * 100,
-      y: -9999 + idx * 100,
-      width: 100,
-      height: 100,
+      x: -(OFFSCREEN_WIDTH - 1),
+      y: -(OFFSCREEN_HEIGHT - 1),
+      width: OFFSCREEN_WIDTH,
+      height: OFFSCREEN_HEIGHT,
     });
 
     // Inject stealth on every page load.
@@ -180,12 +187,13 @@ class WebViewManager {
     const url = info.view.webContents.isDestroyed() ? '(destroyed)' : info.view.webContents.getURL();
     console.log(`[WebViewManager] hideView(${id}) url=${url}`);
 
-    const idx = parseInt(id, 10) || 0;
+    // Restore full viewport dimensions off-screen so the agent's CSS
+    // layout viewport stays at 1920×1080 while browsing in the background.
     info.view.setBounds({
-      x: -9999 + idx * 100,
-      y: -9999 + idx * 100,
-      width: 100,
-      height: 100,
+      x: -(OFFSCREEN_WIDTH - 1),
+      y: -(OFFSCREEN_HEIGHT - 1),
+      width: OFFSCREEN_WIDTH,
+      height: OFFSCREEN_HEIGHT,
     });
     info.isShow = false;
 

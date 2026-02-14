@@ -76,3 +76,4 @@ browserRouter.post("/window/update", (_req: Request, res: Response) => {
     message: "Window position managed by Electron main process",
   });
 });
+
