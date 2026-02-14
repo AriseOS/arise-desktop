@@ -107,6 +107,11 @@ export class AMITaskExecutor implements TaskExecutorLike {
   // Running agents (key = subtaskId)
   private _runningAgents = new Map<string, Agent>();
 
+  // Session pool: reusable sessionIds for parallel browser subtasks.
+  // Sessions stay alive (page claimed) until task ends — avoids pool page
+  // claim/release churn that causes race conditions between parallel agents.
+  private _sessionPool: string[] = [];
+
   constructor(opts: {
     taskId: string;
     emitter?: SSEEmitter;
@@ -292,6 +297,11 @@ export class AMITaskExecutor implements TaskExecutorLike {
 
     logger.info(result, "Execution finished");
 
+    // Close all pooled browser sessions (return pages to Electron pool).
+    // Running subtasks return their sessionIds in their finally blocks before
+    // execute() reaches here, so the pool should contain all session IDs.
+    await this._closeAllPooledSessions();
+
     // Persist final task status (fire-and-forget)
     try {
       const finalStatus = this._stopped ? "failed" as const
@@ -398,20 +408,49 @@ export class AMITaskExecutor implements TaskExecutorLike {
 
   // ===== Execute Single Subtask =====
 
+  private _borrowSessionId(): string {
+    if (this._sessionPool.length > 0) {
+      return this._sessionPool.pop()!;
+    }
+    // Create a new sessionId — BrowserSession.getInstance() will claim a pool page on first use
+    const id = `${this.taskId}_par_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    logger.info({ sessionId: id }, "Created new session for pool");
+    return id;
+  }
+
+  private _returnSessionId(sessionId: string): void {
+    this._sessionPool.push(sessionId);
+  }
+
+  private async _closeAllPooledSessions(): Promise<void> {
+    for (const sessionId of this._sessionPool) {
+      try {
+        const session = BrowserSession.getExistingInstance(sessionId);
+        if (session) {
+          await session.close();
+        }
+      } catch (e) {
+        logger.warn({ err: e, sessionId }, "Failed to close pooled session");
+      }
+    }
+    this._sessionPool = [];
+  }
+
   private async executeSubtask(
     subtask: AMISubtask,
     collector: ExecutionDataCollector,
   ): Promise<boolean> {
-    // Resolve tools: for parallel browser subtasks, create fresh tools via factory
-    // with a unique sessionId so each parallel agent gets its own Electron pool page.
-    const uniqueSessionId = `${this.taskId}_par_${subtask.id}`;
+    // Resolve tools: for parallel browser subtasks, borrow a reusable sessionId
+    // so each parallel agent gets its own Electron pool page that persists across subtasks.
+    let borrowedSessionId: string | null = null;
     let tools: AgentTool<any>[] | undefined;
 
     if (this.childAgentToolsFactory && subtask.agentType === "browser") {
-      tools = this.childAgentToolsFactory(subtask.agentType, uniqueSessionId);
+      borrowedSessionId = this._borrowSessionId();
+      tools = this.childAgentToolsFactory(subtask.agentType, borrowedSessionId);
       logger.info(
-        { subtaskId: subtask.id, sessionId: uniqueSessionId },
-        "Created per-subtask browser tools",
+        { subtaskId: subtask.id, sessionId: borrowedSessionId },
+        "Borrowed session for browser subtask",
       );
     } else {
       tools = this.agentTools.get(subtask.agentType);
@@ -447,8 +486,8 @@ export class AMITaskExecutor implements TaskExecutorLike {
           await this.waitIfPaused();
 
           // Online Learning: fresh recorder for each attempt (browser subtasks only)
-          if (subtask.agentType === "browser") {
-            recorder = await this.startBehaviorRecorder(uniqueSessionId);
+          if (subtask.agentType === "browser" && borrowedSessionId) {
+            recorder = await this.startBehaviorRecorder(borrowedSessionId);
           }
 
           logger.info(
@@ -609,20 +648,13 @@ export class AMITaskExecutor implements TaskExecutorLike {
         recorder = null;
       }
 
-      // Clean up parallel browser session: return Electron pool page
-      if (this.childAgentToolsFactory && subtask.agentType === "browser") {
-        try {
-          const session = BrowserSession.getExistingInstance(uniqueSessionId);
-          if (session) {
-            await session.close();
-            logger.info(
-              { subtaskId: subtask.id, sessionId: uniqueSessionId },
-              "Closed parallel browser session",
-            );
-          }
-        } catch (e) {
-          logger.warn({ err: e, subtaskId: subtask.id }, "Failed to close parallel browser session");
-        }
+      // Return sessionId to pool for reuse (session stays alive, page stays claimed)
+      if (borrowedSessionId) {
+        this._returnSessionId(borrowedSessionId);
+        logger.info(
+          { subtaskId: subtask.id, sessionId: borrowedSessionId },
+          "Returned session to pool",
+        );
       }
     }
   }
