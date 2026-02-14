@@ -379,6 +379,24 @@
   min-width: 0;
 }
 
+.home-page-v2 .sender-name-line {
+  margin-left: 38px;
+  margin-bottom: 2px;
+}
+
+.home-page-v2 .sender-name {
+  font-size: 12px;
+  color: var(--color-text-secondary, #777);
+  font-weight: 600;
+}
+
+.home-page-v2 .subtask-badge {
+  font-size: 10px;
+  color: var(--color-text-tertiary, #999);
+  margin-left: 4px;
+  font-weight: 500;
+}
+
 .home-page-v2 .message-bubble {
   display: inline-block;
   max-width: 85%;

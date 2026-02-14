@@ -531,7 +531,7 @@ export class AMITaskExecutor implements TaskExecutorLike {
           // Bridge agent events to SSE
           const agentName = `${subtask.agentType}Agent`;
           const unsubscribe = this.emitter
-            ? bridgeAgentToSSE(agent, this.emitter, this.taskId, agentName)
+            ? bridgeAgentToSSE(agent, this.emitter, this.taskId, agentName, `#${subtask.id}`)
             : () => {};
 
           // Loop guard: abort agent if too many turns
@@ -1015,6 +1015,7 @@ No historical workflow guide available. Please explore and complete the task usi
         subtask.agentType,
         this.executorId,
         this.taskLabel,
+        `#${subtask.id}`,
       );
     } else if (subtask.state === SubtaskState.FAILED) {
       const errorHint = this.classifyError(subtask.error ?? "");
@@ -1025,6 +1026,7 @@ No historical workflow guide available. Please explore and complete the task usi
         subtask.agentType,
         this.executorId,
         this.taskLabel,
+        `#${subtask.id}`,
       );
     }
   }
@@ -1040,6 +1042,7 @@ No historical workflow guide available. Please explore and complete the task usi
         subtask.agentType,
         this.executorId,
         this.taskLabel,
+        `#${subtask.id}`,
       );
     }
 

@@ -293,16 +293,6 @@ export const useAgentStore = create((set, get) => ({
    * Add a message to task
    */
   addMessage: (taskId, role, content, extra = {}) => {
-    // DEBUG: Log what we're adding
-    console.log('[AgentStore] addMessage called:', {
-      taskId,
-      role,
-      contentPreview: content?.substring(0, 50),
-      extraKeys: Object.keys(extra),
-      hasAttachments: !!extra.attachments,
-      attachmentsCount: extra.attachments?.length || 0,
-    });
-
     let newMessageId = null;
 
     set((state) => {
@@ -364,6 +354,9 @@ export const useAgentStore = create((set, get) => ({
           metadata: {
             taskId,
             reportType: extra.reportType,
+            agentType: extra.agentType,
+            executorId: extra.executorId,
+            taskLabel: extra.taskLabel,
           },
         }).catch((error) => {
           console.warn(`[AgentStore] Failed to persist message:`, error.message);
@@ -886,15 +879,6 @@ export const useAgentStore = create((set, get) => ({
           // DS-11: File attachments from task execution
           const attachments = event.attachments || [];
 
-          // DEBUG: Log full event to see what backend sends
-          console.log('[AgentStore] wait_confirm event received:', {
-            hasAttachments: !!event.attachments,
-            attachmentsType: typeof event.attachments,
-            attachmentsIsArray: Array.isArray(event.attachments),
-            attachmentsCount: attachments.length,
-            attachmentsRaw: event.attachments,
-          });
-
           // Add the simple answer as an assistant message with attachments
           store.addMessage(taskId, 'assistant', content, {
             type: 'simple_answer',
@@ -912,10 +896,6 @@ export const useAgentStore = create((set, get) => ({
             lastSimpleQuestion: question,
           });
 
-          console.log('[AgentStore] wait_confirm: Simple answer displayed, status=waiting', {
-            question: question.substring(0, 50),
-            attachmentsCount: attachments.length,
-          });
         }
         break;
 
@@ -1928,14 +1908,15 @@ export const useAgentStore = create((set, get) => ({
       // ===== Agent Report Events (for HomePage chat-style display) =====
       case 'agent_report':
         {
-          const { message, report_type, executor_id, task_label, agent_type } = event;
+          const { message, report_type, executor_id, task_label, agent_type, subtask_label } = event;
           if (message) {
             // Add agent report as a message for display in chat
+            // Prefer subtask_label (specific subtask) over task_label (executor-level)
             addMessage('agent', message, {
               reportType: report_type || 'info',
               agentType: agent_type,
               executorId: executor_id,
-              taskLabel: task_label,
+              taskLabel: subtask_label || task_label,
             });
           }
         }

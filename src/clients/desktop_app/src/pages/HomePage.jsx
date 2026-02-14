@@ -158,6 +158,8 @@ function HomePage({ session, onNavigate, showStatus, version, initialMessage }) 
             isContext: msg.is_context,
             reportType: msg.metadata?.reportType,
             agentType: msg.metadata?.agentType,
+            executorId: msg.metadata?.executorId,
+            taskLabel: msg.metadata?.taskLabel,
           }));
 
           setSessionMessages(messages);
@@ -211,6 +213,8 @@ function HomePage({ session, onNavigate, showStatus, version, initialMessage }) 
           isContext: msg.is_context,
           reportType: msg.metadata?.reportType,
           agentType: msg.metadata?.agentType,
+          executorId: msg.metadata?.executorId,
+          taskLabel: msg.metadata?.taskLabel,
         }));
 
         // Preserve scroll position: record scrollHeight before prepend
@@ -570,8 +574,14 @@ function HomePage({ session, onNavigate, showStatus, version, initialMessage }) 
     }
 
     // Agent/assistant messages: avatar on left + bubble
+    const subtaskTag = message.taskLabel;
+
     return (
       <div key={message.id || index} className={`message agent ${isAgent ? `report-${reportType}` : ''}`}>
+        <div className="sender-name-line">
+          <span className="sender-name">Ami</span>
+          {subtaskTag && <span className="subtask-badge">{subtaskTag}</span>}
+        </div>
         <div className="message-row">
           <div className="msg-avatar agent-avatar" style={agentConfig ? { background: agentConfig.bgColor, color: agentConfig.color } : undefined}>
             {agentConfig ? (

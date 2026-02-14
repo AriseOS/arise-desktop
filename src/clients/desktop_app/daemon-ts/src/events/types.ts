@@ -430,6 +430,7 @@ export interface AgentReportData extends BaseActionData {
   agent_type?: string;
   executor_id?: string;
   task_label?: string;
+  subtask_label?: string;
 }
 
 // ===== Memory Events =====

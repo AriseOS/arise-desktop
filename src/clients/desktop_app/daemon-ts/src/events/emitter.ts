@@ -393,6 +393,7 @@ export class SSEEmitter {
     agentType?: string,
     executorId?: string,
     taskLabel?: string,
+    subtaskLabel?: string,
   ): void {
     this.emit({
       action: Action.agent_report,
@@ -401,6 +402,7 @@ export class SSEEmitter {
       agent_type: agentType,
       executor_id: executorId,
       task_label: taskLabel,
+      subtask_label: subtaskLabel,
     } as AgentReportData);
   }
 

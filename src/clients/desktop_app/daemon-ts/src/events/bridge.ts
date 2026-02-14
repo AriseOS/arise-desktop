@@ -180,6 +180,7 @@ export function bridgeAgentToSSE(
   emitter: SSEEmitter,
   taskId: string,
   agentName = "Agent",
+  subtaskLabel?: string,
 ): () => void {
   // Accumulate streaming deltas within a turn.
   // Emit as a single agent_thinking + agent_report at boundaries:
@@ -266,7 +267,7 @@ export function bridgeAgentToSSE(
       // emit agent_thinking + agent_report before the tool event
       if (sseEvent.action === Action.activate_toolkit && turnText && !flushed) {
         emitter.emitAgentThinking(turnText.slice(0, 500), agentName);
-        emitter.emitAgentReport(turnText.slice(0, 300), "thinking");
+        emitter.emitAgentReport(turnText.slice(0, 300), "thinking", undefined, undefined, undefined, subtaskLabel);
         logger.info(
           { agent: agentName, thinking: turnText.slice(0, 200) },
           "Agent thinking before tool call",
