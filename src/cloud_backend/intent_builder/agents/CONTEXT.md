@@ -78,11 +78,11 @@ await session._disconnect()
 
 ### read_spec
 
-Reads specification files from `docs/base_app/`:
-- `workflow_specification.md`
-- `browser_agent_spec.md`
-- `scraper_agent_spec.md`
-- `storage_agent_spec.md`
+Reads agent specification files from Skills references:
+- `workflow_spec.md`
+- `browser_agent.md`
+- `scraper_agent.md`
+- `storage_agent.md`
 
 ### validate (RuleValidator)
 

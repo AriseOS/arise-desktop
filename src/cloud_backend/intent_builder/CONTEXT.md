@@ -139,17 +139,16 @@ Skills are located in `.claude/skills/` and must stay in sync with source code.
 
 ### Skill Dependencies
 
-| Skill | Source of Truth | When to Update |
-|-------|-----------------|----------------|
-| `agent-specs/references/browser_agent.md` | `docs/base_app/browser_agent_spec.md` | Browser agent behavior changes |
-| `agent-specs/references/scraper_agent.md` | `docs/base_app/scraper_agent_spec.md` | Scraper agent behavior changes |
-| `agent-specs/references/storage_agent.md` | `docs/base_app/storage_agent_spec.md` | Storage agent behavior changes |
-| `workflow-generation/references/workflow_spec.md` | `docs/base_app/workflow_specification.md` | Workflow YAML structure changes |
-| `workflow-validation/scripts/validate.py` | Independent | Validation rules change |
-| `workflow-optimizations/references/*.md` | Independent | New optimization patterns |
+| Skill | When to Update |
+|-------|----------------|
+| `agent-specs/references/browser_agent.md` | Browser agent behavior changes |
+| `agent-specs/references/scraper_agent.md` | Scraper agent behavior changes |
+| `agent-specs/references/storage_agent.md` | Storage agent behavior changes |
+| `workflow-generation/references/workflow_spec.md` | Workflow YAML structure changes |
+| `workflow-validation/scripts/validate.py` | Validation rules change |
+| `workflow-optimizations/references/*.md` | New optimization patterns |
 
 ### Update Process
 
-1. Update source docs in `docs/base_app/`
-2. Copy updated content to corresponding Skill `references/`
-3. Update `SKILL.md` if the description or usage changes
+1. Update content in the corresponding Skill `references/` files
+2. Update `SKILL.md` if the description or usage changes

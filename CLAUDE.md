@@ -41,8 +41,6 @@ This file provides guidance to Claude Code when working with this repository.
 ```
 Ami/
 ├── src/
-│   ├── clients/desktop_app/     # Desktop application (Tauri + Python daemon)
-│   │   └── ami_daemon/base_app/ # BaseAgent framework implementation
 │   ├── cloud_backend/           # Server-side services
 │   │   └── intent_builder/      # Intent-based workflow generation
 │   └── common/                  # Shared utilities
@@ -52,15 +50,12 @@ Ami/
 
 ## Key Paths
 
-- BaseAgent: `src/clients/desktop_app/ami_daemon/base_app/`
 - Intent Builder: `src/cloud_backend/intent_builder/`
 - LLM Providers: `src/common/llm/`
-- Desktop App: `src/clients/desktop_app/`
 
 ## Environment
 
 - Python dependencies use **venv**: activate with `source .venv/bin/activate` before running any Python commands
-- Client logs: `~/.ami/logs/app.log`
 - Server logs: `~/ami-server/logs/`
 
 ## Debugging Tools
@@ -73,9 +68,6 @@ Ami/
 # Python backend (ensure venv is activated)
 pip install -r requirements.txt
 uvicorn src.cloud_backend.main:app --reload
-
-# Desktop app
-cd src/clients/desktop_app && npm run tauri dev
 
 # Code quality
 black . --line-length 88

@@ -1,12 +1,13 @@
 # src/common/
 
-Shared utilities used by all Ami modules.
+Shared utilities used by cloud backend modules.
 
 ## Directories
 
 - `llm/` - LLM provider abstraction (Anthropic, OpenAI, Claude Agent SDK)
-- `script_generation/` - Reusable script generators for browser/scraper agents
-- `services/` - Shared services (resource manager, metadata, sync)
+- `script_generation/` - Reusable script generators for browser/scraper workflows
+- `agent/` - Agent utilities
+- `memory/` - Memory utilities
 
 ## Key Files
 
@@ -16,8 +17,7 @@ Shared utilities used by all Ami modules.
 
 ## script_generation/
 
-Reusable script generation module shared between:
-- **BaseApp agents** (BrowserAgent, ScraperAgent) - runtime script generation
+Reusable script generation module used by:
 - **Cloud Backend** (Intent Builder) - pre-generation during workflow creation
 
 See `script_generation/CONTEXT.md` for details.
