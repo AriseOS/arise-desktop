@@ -1,5 +1,5 @@
 # Ami Cloud Backend Configuration
-# Server-side AI analysis and data storage
+# Memory-as-a-Service + Auth
 
 # App Version Control
 app:
@@ -19,12 +19,6 @@ storage:
   type: filesystem  # Options: filesystem, s3
   base_path: ~/ami-server  # Base path for server-side file storage
 
-  # S3 Configuration (uncomment to use)
-  # s3_bucket: ami-cloud-storage
-  # s3_region: us-east-1
-  # s3_access_key_env: AWS_ACCESS_KEY_ID
-  # s3_secret_key_env: AWS_SECRET_ACCESS_KEY
-
 # Database Configuration
 database:
   type: sqlite  # Options: sqlite, postgresql
@@ -42,53 +36,27 @@ database:
   #   password_env: DB_PASSWORD
 
 # LLM Configuration
-# All LLM calls go through Claude Relay Service (CRS)
+# Server-side API key for Memory operations (Reasoner, Planner, Learner)
 llm:
   default_provider: anthropic  # Options: anthropic, openai
+  api_key_env: LLM_API_KEY  # Environment variable containing the API key
 
-  # CRS (Claude Relay Service) Configuration
-  # All LLM calls route through CRS
-  # Migration: Upgraded old API Proxy to CRS (port remains 8080)
-  use_proxy: true  # Always use CRS for LLM calls
-  proxy_url: "https://api.ariseos.com/api"  # CRS port (custom configuration)
-  # For production, change to: https://crs.ariseos.com
+  # Proxy/relay URL (optional)
+  use_proxy: true
+  proxy_url: "https://api.ariseos.com/api"
 
   # Anthropic Configuration
-  # Note: API keys are provided by users through CRS (Claude Relay Service)
-  # System API key (ANTHROPIC_API_KEY env var) is no longer used
   anthropic:
-    # model: claude-sonnet-4-5-20250929  # Default model for complex tasks
-    # simple_model: claude-haiku-4-5-20251001  # Light model for description generation (optional, falls back to default)
-    model: Kimi # Default model for complex tasks
-    simple_model: Kimi # Light model for description generation (optional, falls back to default)
+    model: claude-sonnet-4-5-20250929  # Default model for complex tasks
+    simple_model: claude-haiku-4-5-20251001  # Light model for description generation
     max_tokens: 4096
     temperature: 0.0
 
   # OpenAI Configuration
-  # Note: API keys are provided by users through CRS (Claude Relay Service)
-  # System API key (OPENAI_API_KEY env var) is no longer used
   openai:
     model: gpt-4
     max_tokens: 4096
     temperature: 0.0
-
-# Tavily Configuration
-# Web search and research via CRS Tavily endpoints
-tavily:
-  api_url: "https://api.ariseos.com/tavily"  # CRS Tavily API base URL
-
-# Workflow Generation Configuration
-workflow_generation:
-  save_intermediates: true  # Save intent_graph.json and metaflow.yaml
-  timeout_seconds: 300  # 5 minutes timeout
-  max_retries: 3
-  retry_delay_seconds: 5
-
-# Session Management Configuration
-# Intent Builder session cleanup settings
-session:
-  timeout_minutes: 30  # Session inactivity timeout (30 minutes)
-  cleanup_interval_minutes: 5  # Background cleanup task runs every 5 minutes
 
 # Authentication Configuration
 auth:
@@ -130,23 +98,12 @@ cors:
 #   - neo4j: Persistent graph database (production option 1)
 #   - surrealdb: Multi-model database (production option 2)
 #
-# Neo4j setup:
-#   docker run -d --name neo4j -p 7474:7474 -p 7687:7687 \
-#     -e NEO4J_AUTH=neo4j/your_password neo4j:5.15
-#
 # SurrealDB setup:
 #   docker run -d --name surrealdb -p 8000:8000 \
 #     surrealdb/surrealdb:latest start --allow-experimental record_references --user root --pass your_password
 #
 graph_store:
   backend: surrealdb  # Options: networkx, neo4j, surrealdb
-  # backend: neo4j # Options: networkx, neo4j, surrealdb
-
-  # Neo4j Configuration (used when backend: neo4j)
-  # url: neo4j://localhost:7687    # Or use NEO4J_URI env var
-  # username: neo4j                     # Or use NEO4J_USER env var
-  # password: Ami@2024              # Or use NEO4J_PASSWORD env var
-  # database: neo4j                 # Or use NEO4J_DATABASE env var
 
   # SurrealDB Configuration (used when backend: surrealdb)
   url: ws://localhost:8000/rpc  # Or use SURREALDB_URL env var
@@ -157,45 +114,32 @@ graph_store:
   vector_dimensions: 1024
 
 # Embedding Model Configuration
-# For semantic search in Memory system
+# Server-side API key for Memory embedding operations
 embedding:
   provider: openai  # Options: openai, local_bge (openai works with OpenAI-compatible APIs)
   model: BAAI/bge-m3  # Model name (supports Chinese/English, 8K tokens)
   dimension: 1024  # Embedding vector dimension
-  # API configuration
-  # Note: API key is provided per-request via user's x-ami-api-key header
-  base_url: https://api.ariseos.com/openai/v1  # CRS OpenAI-compatible endpoint
+  api_key_env: EMBEDDING_API_KEY  # Environment variable containing the API key
+  base_url: https://api.ariseos.com/openai/v1  # OpenAI-compatible endpoint
 
 # Reasoner Configuration
 # Memory retrieval and workflow planning
 reasoner:
-  max_depth: 3  # Legacy max depth (kept for compatibility)
-  # Similarity thresholds for embedding search
+  max_depth: 3
   similarity_thresholds:
-    state_resolution: 0.5  # Minimum score to accept a state match when resolving state by URL/description
-    path_finding: 0.3  # Minimum score for candidate states in navigation path finding
-  # L2 path planning (LLM-as-Reasoner)
+    state_resolution: 0.5
+    path_finding: 0.3
   path_planning:
-    candidate_top_k: 20  # Number of states recalled by embedding before planning
-    min_score: 0.15  # Minimum embedding similarity score for candidate recall
-    max_states: 20  # Maximum number of states sent to planner prompt
-    max_actions: 50  # Maximum number of actions sent to planner prompt
-    domain_prefilter_enabled: true  # Try lightweight fuzzy domain prefilter before subgraph planning
-    domain_match_threshold: 0.45  # Minimum fuzzy score to accept matched domain
-    domain_min_candidates: 3  # Fall back to full candidates if filtered pool is too small
-    domain_fallback_to_full_graph: true  # Retry once without domain filter when filtered planning fails
+    candidate_top_k: 20
+    min_score: 0.15
+    max_states: 20
+    max_actions: 50
+    domain_prefilter_enabled: true
+    domain_match_threshold: 0.45
+    domain_min_candidates: 3
+    domain_fallback_to_full_graph: true
 
 # Memory Configuration
 # IntentSequence and workflow storage settings
 memory:
-  # IntentSequence deduplication threshold
-  # Sequences with cosine similarity >= this threshold are considered duplicates
-  # Higher value = stricter dedup (only near-identical sequences are merged)
-  # Lower value = more aggressive dedup (semantically similar sequences are merged)
   intent_sequence_dedup_threshold: 0.95
-
-# Rate Limiting (optional)
-# rate_limit:
-#   enabled: true
-#   requests_per_minute: 60
-#   burst: 10
