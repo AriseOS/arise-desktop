@@ -57,6 +57,8 @@ class User(Base):
     full_name = Column(String(100), nullable=True)
     is_active = Column(Boolean, default=True)
     is_admin = Column(Boolean, default=False)
+    sub2api_user_id = Column(Integer, nullable=True)  # User ID in sub2api system
+    sub2api_api_key = Column(String(255), nullable=True)  # API key from sub2api (sk-xxx)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     last_login = Column(DateTime, nullable=True)

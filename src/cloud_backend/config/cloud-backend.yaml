@@ -36,13 +36,11 @@ database:
   #   password_env: DB_PASSWORD
 
 # LLM Configuration
-# Server-side API key for Memory operations (Reasoner, Planner, Learner)
+# Per-user API keys are managed by sub2api. These settings configure model and proxy routing.
 llm:
   default_provider: anthropic  # Options: anthropic, openai
-  api_key_env: LLM_API_KEY  # Environment variable containing the API key
 
-  # Proxy/relay URL (optional)
-  use_proxy: true
+  # Proxy/relay URL (required) - sub2api gateway
   proxy_url: "https://api.ariseos.com/api"
 
   # Anthropic Configuration
@@ -113,14 +111,18 @@ graph_store:
   password: root                # Or use SURREALDB_PASSWORD env var
   vector_dimensions: 1024
 
+# Sub2API (CRS) Configuration
+# Per-user token tracking via sub2api Admin API
+sub2api:
+  admin_api_key_env: SUB2API_ADMIN_API_KEY  # Environment variable for admin API key
+
 # Embedding Model Configuration
-# Server-side API key for Memory embedding operations
+# Per-user API keys route through sub2api. These settings configure model and endpoint.
 embedding:
   provider: openai  # Options: openai, local_bge (openai works with OpenAI-compatible APIs)
   model: BAAI/bge-m3  # Model name (supports Chinese/English, 8K tokens)
   dimension: 1024  # Embedding vector dimension
-  api_key_env: EMBEDDING_API_KEY  # Environment variable containing the API key
-  base_url: https://api.ariseos.com/openai/v1  # OpenAI-compatible endpoint
+  base_url: https://api.ariseos.com/openai/v1  # OpenAI-compatible endpoint (via sub2api)
 
 # Reasoner Configuration
 # Memory retrieval and workflow planning

@@ -4,7 +4,7 @@ Ami Cloud Backend - Memory-as-a-Service + Auth
 Provides:
 1. User authentication (registration, login, JWT-based auth)
 2. Memory endpoints (add, query, stats, phrases, share, learn, plan)
-3. Server-side Embedding/LLM API keys (users don't provide their own)
+3. Per-user LLM API keys via sub2api for token tracking and billing
 """
 
 import uvicorn
@@ -30,10 +30,7 @@ config_service = CloudConfigService()
 
 # Global service instances
 storage_service = None
-
-# Server-side API keys (loaded at startup from environment variables)
-server_embedding_api_key: Optional[str] = None
-server_llm_api_key: Optional[str] = None
+sub2api_client = None  # Sub2API admin client for per-user token tracking
 
 # Create FastAPI application
 app = FastAPI(
@@ -82,12 +79,28 @@ async def get_current_user_id(
     return user_id
 
 
+async def get_user_llm_api_key(
+    user_id: str = Depends(get_current_user_id),
+) -> str:
+    """FastAPI dependency: get per-user sub2api API key. No fallback."""
+    from database.models import SessionLocal, User
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == int(user_id)).first()
+        if user and user.sub2api_api_key:
+            return user.sub2api_api_key
+    finally:
+        db.close()
+    raise HTTPException(403, "User has no API key. Please contact admin to provision your account.")
+
+
 # ===== Startup / Shutdown =====
 
 @app.on_event("startup")
 async def startup_event():
     """Startup initialization"""
-    global storage_service, server_embedding_api_key, server_llm_api_key
+    global storage_service, sub2api_client
 
     print("\n" + "="*80)
     print("Ami Cloud Backend Starting...")
@@ -128,30 +141,38 @@ async def startup_event():
         init_memory_services(base_config)
         print(f"Memory Services: multi-tenant ({base_config.graph_backend})")
 
-        # 5. Verify and load server-side API keys
-        embedding_config = config_service.get("embedding", {})
-        if not embedding_config:
-            print("FATAL: embedding config not found in cloud-backend.yaml")
+        # 5. Validate required config (no fallback defaults for sensitive values)
+        required_configs = [
+            "llm.proxy_url",
+            "llm.anthropic.model",
+            "embedding.base_url",
+            "embedding.model",
+            "embedding.dimension",
+        ]
+        for key in required_configs:
+            if not config_service.get(key):
+                print(f"FATAL: Required config '{key}' not set in cloud-backend.yaml")
+                sys.exit(1)
+        print(f"Config validated: LLM proxy={config_service.get('llm.proxy_url')}")
+
+        # 6. Initialize sub2api client (per-user API key provisioning + token tracking)
+        sub2api_admin_key_env = config_service.get("sub2api.admin_api_key_env", "SUB2API_ADMIN_API_KEY")
+        sub2api_admin_key = os.environ.get(sub2api_admin_key_env)
+        if not sub2api_admin_key:
+            print(f"FATAL: {sub2api_admin_key_env} environment variable required")
             sys.exit(1)
 
-        embedding_api_key_env = embedding_config.get("api_key_env", "EMBEDDING_API_KEY")
-        server_embedding_api_key = os.environ.get(embedding_api_key_env)
-        if not server_embedding_api_key:
-            print(f"FATAL: {embedding_api_key_env} environment variable required")
-            sys.exit(1)
-        print(f"Embedding: {embedding_config.get('provider', 'openai')} / {embedding_config.get('model', 'unknown')} (server-side key)")
+        from services.sub2api_client import Sub2APIClient
+        sub2api_client = Sub2APIClient(
+            base_url=config_service.get("llm.proxy_url"),
+            admin_api_key=sub2api_admin_key,
+        )
+        print(f"Sub2API: per-user token tracking enabled")
 
-        llm_api_key_env = config_service.get("llm.api_key_env", "LLM_API_KEY")
-        server_llm_api_key = os.environ.get(llm_api_key_env)
-        if not server_llm_api_key:
-            print(f"FATAL: {llm_api_key_env} environment variable required")
-            sys.exit(1)
-        print(f"LLM: {config_service.get('llm.default_provider', 'anthropic')} (server-side key)")
-
-        # 6. Reasoner ready for per-request initialization
+        # 7. Reasoner ready for per-request initialization
         print("Reasoner (ready for initialization)")
 
-        # 7. Setup structured logging
+        # 8. Setup structured logging
         log_level = config_service.get("logging.level", "INFO")
         json_logging = config_service.get("logging.json_format", True)
         log_file = config_service.get("logging.file", None)
@@ -339,6 +360,23 @@ async def register(data: dict):
     try:
         user = auth_service.create_user(db, username, email, password)
 
+        # Provision sub2api user + API key (required for LLM access)
+        try:
+            result = await sub2api_client.provision_user(
+                email=email, password=password, username=username,
+            )
+        except Exception as e:
+            # Sub2api failed — delete the Cloud Backend user to keep consistency
+            logger.error(f"Sub2api provisioning failed for {username}: {e}")
+            db.delete(user)
+            db.commit()
+            raise HTTPException(502, f"Failed to provision API access: {e}")
+
+        user.sub2api_user_id = result["user_id"]
+        user.sub2api_api_key = result["api_key"]
+        db.commit()
+        logger.info(f"Sub2api provisioned for user {username}: sub2api_id={result['user_id']}")
+
         # Auto-login: issue tokens immediately
         token_data = {"sub": str(user.id), "username": user.username}
         access_token = auth_service.create_access_token(token_data)
@@ -352,9 +390,10 @@ async def register(data: dict):
             "user_id": str(user.id),
             "username": user.username,
         }
-    except ValueError as e:
-        db.rollback()
-        raise HTTPException(400, str(e))
+    except (HTTPException, ValueError) as e:
+        if isinstance(e, ValueError):
+            raise HTTPException(400, str(e))
+        raise
     except Exception:
         db.rollback()
         raise
@@ -507,6 +546,7 @@ async def change_password(
 async def add_to_memory(
     data: dict,
     user_id: str = Depends(get_current_user_id),
+    llm_api_key: str = Depends(get_user_llm_api_key),
 ):
     """
     Add Operations to User's Workflow Memory
@@ -537,31 +577,31 @@ async def add_to_memory(
     try:
         from src.common.memory.thinker.workflow_processor import WorkflowProcessor
 
-        # Setup embedding service with server-side API key
+        # Setup embedding service with per-user API key
         embedding_service = None
         if generate_embeddings:
             from src.common.llm import get_cached_embedding_service
             embedding_service = get_cached_embedding_service(
-                api_key=server_embedding_api_key,
-                base_url=config_service.get("embedding.base_url", "https://api.ariseos.com/openai/v1"),
-                model=config_service.get("embedding.model", "BAAI/bge-m3"),
-                dimension=config_service.get("embedding.dimension", 1024),
+                api_key=llm_api_key,
+                base_url=config_service.get("embedding.base_url"),
+                model=config_service.get("embedding.model"),
+                dimension=config_service.get("embedding.dimension"),
             )
 
-        # Setup LLM providers with server-side API key
+        # Setup LLM providers with per-user API key
         llm_provider = None
         simple_llm_provider = None
         if generate_embeddings:
             from src.common.llm import get_cached_anthropic_provider
             llm_provider = get_cached_anthropic_provider(
-                api_key=server_llm_api_key,
-                model=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
+                api_key=llm_api_key,
+                model=config_service.get("llm.anthropic.model"),
                 base_url=config_service.get("llm.proxy_url")
             )
             simple_model = config_service.get("llm.anthropic.simple_model")
             if simple_model:
                 simple_llm_provider = get_cached_anthropic_provider(
-                    api_key=server_llm_api_key,
+                    api_key=llm_api_key,
                     model=simple_model,
                     base_url=config_service.get("llm.proxy_url")
                 )
@@ -617,6 +657,7 @@ async def add_to_memory(
 async def query_cognitive_phrase(
     data: dict,
     user_id: str = Depends(get_current_user_id),
+    llm_api_key: str = Depends(get_user_llm_api_key),
 ):
     """
     Query CognitivePhrase (User-Recorded Complete Workflow)
@@ -633,7 +674,7 @@ async def query_cognitive_phrase(
     try:
         from src.common.memory.memory_service import get_private_memory, get_public_memory
 
-        user_reasoner = await _get_reasoner_for_user(user_id)
+        user_reasoner = await _get_reasoner_for_user(user_id, llm_api_key=llm_api_key)
 
         private_wm = get_private_memory(user_id).workflow_memory
         public_memory_service = get_public_memory()
@@ -709,6 +750,7 @@ async def query_cognitive_phrase(
 async def query_memory(
     data: dict,
     user_id: str = Depends(get_current_user_id),
+    llm_api_key: str = Depends(get_user_llm_api_key),
 ):
     """
     Unified Memory Query - Task, Navigation, and Action queries
@@ -731,7 +773,7 @@ async def query_memory(
     top_k = data.get("top_k", 10)
 
     try:
-        user_reasoner = await _get_reasoner_for_user(user_id)
+        user_reasoner = await _get_reasoner_for_user(user_id, llm_api_key=llm_api_key)
 
         result = await user_reasoner.query(
             target=target,
@@ -1525,9 +1567,10 @@ async def unpublish_cognitive_phrase(
 
 async def _get_reasoner_for_user(
     user_id: str,
+    llm_api_key: str,
     use_public: bool = False,
 ):
-    """Get or create a Reasoner instance with server-side API keys and user memory."""
+    """Get or create a Reasoner instance with per-user API keys and user memory."""
     from src.common.memory.reasoner.reasoner import Reasoner
     from src.common.llm import get_cached_embedding_service, get_cached_anthropic_provider
     from src.common.memory.memory_service import get_private_memory, get_public_memory
@@ -1538,16 +1581,16 @@ async def _get_reasoner_for_user(
         user_memory = get_private_memory(user_id)
 
     llm_provider = get_cached_anthropic_provider(
-        api_key=server_llm_api_key,
-        model=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
-        base_url=config_service.get("llm.proxy_url", "https://api.ariseos.com/api")
+        api_key=llm_api_key,
+        model=config_service.get("llm.anthropic.model"),
+        base_url=config_service.get("llm.proxy_url")
     )
 
     embedding_service = get_cached_embedding_service(
-        api_key=server_embedding_api_key,
-        base_url=config_service.get("embedding.base_url", "https://api.ariseos.com/openai/v1"),
-        model=config_service.get("embedding.model", "BAAI/bge-m3"),
-        dimension=config_service.get("embedding.dimension", 1024),
+        api_key=llm_api_key,
+        base_url=config_service.get("embedding.base_url"),
+        model=config_service.get("embedding.model"),
+        dimension=config_service.get("embedding.dimension"),
     )
 
     reasoner_config = config_service.get("reasoner", {})
@@ -1577,6 +1620,7 @@ async def _get_reasoner_for_user(
 async def query_workflow_from_memory(
     data: dict,
     user_id: str = Depends(get_current_user_id),
+    llm_api_key: str = Depends(get_user_llm_api_key),
 ):
     """
     Query Workflow from Memory using Natural Language (Reasoner-based).
@@ -1592,7 +1636,7 @@ async def query_workflow_from_memory(
         raise HTTPException(400, "Missing query")
 
     try:
-        user_reasoner = await _get_reasoner_for_user(user_id)
+        user_reasoner = await _get_reasoner_for_user(user_id, llm_api_key=llm_api_key)
         result = await user_reasoner.plan(query)
 
         if not result or not result.success:
@@ -1628,6 +1672,7 @@ async def query_workflow_from_memory(
 async def reasoner_plan(
     data: dict,
     user_id: str = Depends(get_current_user_id),
+    llm_api_key: str = Depends(get_user_llm_api_key),
 ):
     """
     Reasoner Plan API - Get a workflow plan from memory.
@@ -1643,7 +1688,7 @@ async def reasoner_plan(
         raise HTTPException(400, "Missing target (task description)")
 
     try:
-        user_reasoner = await _get_reasoner_for_user(user_id)
+        user_reasoner = await _get_reasoner_for_user(user_id, llm_api_key=llm_api_key)
 
         logger.info(f"Reasoner planning for target: {target[:50]}...")
         result = await user_reasoner.plan(target)
@@ -1694,6 +1739,7 @@ async def reasoner_plan(
 async def plan_with_memory(
     data: dict,
     user_id: str = Depends(get_current_user_id),
+    llm_api_key: str = Depends(get_user_llm_api_key),
 ):
     """
     Memory-Powered Task Analysis using PlannerAgent.
@@ -1715,16 +1761,16 @@ async def plan_with_memory(
         public_ms = get_public_memory()
 
         llm_provider = get_cached_anthropic_provider(
-            api_key=server_llm_api_key,
-            model=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
-            base_url=config_service.get("llm.proxy_url", "https://api.ariseos.com/api"),
+            api_key=llm_api_key,
+            model=config_service.get("llm.anthropic.model"),
+            base_url=config_service.get("llm.proxy_url"),
         )
 
         embedding_service = get_cached_embedding_service(
-            api_key=server_embedding_api_key,
-            base_url=config_service.get("embedding.base_url", "https://api.ariseos.com/openai/v1"),
-            model=config_service.get("embedding.model", "BAAI/bge-m3"),
-            dimension=config_service.get("embedding.dimension", 1024),
+            api_key=llm_api_key,
+            base_url=config_service.get("embedding.base_url"),
+            model=config_service.get("embedding.model"),
+            dimension=config_service.get("embedding.dimension"),
         )
 
         plan_result = await private_ms.plan(
@@ -1757,6 +1803,7 @@ async def plan_with_memory(
 async def learn_from_execution(
     data: dict,
     user_id: str = Depends(get_current_user_id),
+    llm_api_key: str = Depends(get_user_llm_api_key),
 ):
     """
     Post-Execution Learning - Analyzes completed task execution data.
@@ -1786,16 +1833,16 @@ async def learn_from_execution(
         private_ms = get_private_memory(user_id)
 
         llm_provider = get_cached_anthropic_provider(
-            api_key=server_llm_api_key,
-            model=config_service.get("llm.anthropic.model", "claude-sonnet-4-5-20250929"),
-            base_url=config_service.get("llm.proxy_url", "https://api.ariseos.com/api"),
+            api_key=llm_api_key,
+            model=config_service.get("llm.anthropic.model"),
+            base_url=config_service.get("llm.proxy_url"),
         )
 
         embedding_service = get_cached_embedding_service(
-            api_key=server_embedding_api_key,
-            base_url=config_service.get("embedding.base_url", "https://api.ariseos.com/openai/v1"),
-            model=config_service.get("embedding.model", "BAAI/bge-m3"),
-            dimension=config_service.get("embedding.dimension", 1024),
+            api_key=llm_api_key,
+            base_url=config_service.get("embedding.base_url"),
+            model=config_service.get("embedding.model"),
+            dimension=config_service.get("embedding.dimension"),
         )
 
         learn_result = await private_ms.learn(
@@ -1838,6 +1885,37 @@ async def learn_from_execution(
         error_trace = traceback.format_exc()
         logger.error(f"LearnerAgent failed: {e}\n{error_trace}")
         raise HTTPException(500, f"LearnerAgent failed: {str(e)}")
+
+
+# ===== Usage Stats API =====
+
+@app.get("/api/v1/usage/stats")
+async def get_usage_stats(
+    period: Optional[str] = "month",
+    user_id: str = Depends(get_current_user_id),
+):
+    """Get current user's LLM usage statistics from sub2api.
+
+    Query Parameters:
+        period: "day", "week", "month" (default: "month")
+    """
+    from database.models import SessionLocal, User
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == int(user_id)).first()
+        if not user or not user.sub2api_user_id:
+            raise HTTPException(403, "User has no sub2api account linked")
+        sub2api_uid = user.sub2api_user_id
+    finally:
+        db.close()
+
+    try:
+        usage = await sub2api_client.get_user_usage(sub2api_uid, period=period)
+        return {"success": True, "usage": usage}
+    except Exception as e:
+        logger.error(f"Failed to get usage stats for user {user_id}: {e}")
+        raise HTTPException(500, f"Failed to get usage stats: {str(e)}")
 
 
 if __name__ == "__main__":
