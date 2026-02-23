@@ -1,6 +1,6 @@
 # Cloud Backend
 
-Server-side services for Ami platform. Handles workflow generation, intent extraction, and centralized data storage.
+Memory-as-a-Service + Auth platform for Ami. Provides JWT-based authentication and memory endpoints with server-side API keys.
 
 ## Dependencies
 
@@ -8,160 +8,84 @@ Server-side services for Ami platform. Handles workflow generation, intent extra
 
 Memory system uses SurrealDB for persistent graph storage.
 
-**Install via Docker:**
 ```bash
 docker run -d --name surrealdb \
   -p 8000:8000 \
   surrealdb/surrealdb:latest \
-  start --user root --pass your_password
+  start --allow-experimental record_references --user root --pass your_password
 ```
 
-**Configure in `config/cloud-backend.yaml`:**
-```yaml
-graph_store:
-  backend: surrealdb
-  url: ws://localhost:8000/rpc
-  namespace: ami
-  database: memory
-  username: root
-  password: your_password
-```
+### Environment Variables (Required)
 
-Or use environment variables:
 ```bash
-export SURREALDB_URL=ws://localhost:8000/rpc
-export SURREALDB_NAMESPACE=ami
-export SURREALDB_DATABASE=memory
-export SURREALDB_USER=root
-export SURREALDB_PASSWORD=your_password
+export JWT_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export EMBEDDING_API_KEY="your-embedding-api-key"
+export LLM_API_KEY="your-llm-api-key"
 ```
-
-**Fallback**: Set `backend: networkx` to use in-memory storage (data lost on restart).
 
 ## Directories
 
-- `intent_builder/` - Intent-based workflow generation system
-- `memgraph/` - Memory system for learning and querying operation paths (see `memgraph/CONTEXT.md`)
-- `api/` - REST API endpoints (auth, etc.)
-- `core/` - Core services (config, logging, middleware)
-- `database/` - SQLAlchemy models
-- `services/` - Business logic services
-- `models/` - Data models
+- `api/` - Authentication (auth.py with JWT-based AuthService)
+- `core/` - Config service, logging, middleware
+- `database/` - SQLAlchemy models (User)
+- `services/` - Storage service (minimal, filesystem management)
+- `config/` - YAML configuration
 
 ## Key Files
 
-- `main.py` - FastAPI application entry point with all API routes
-- `main.py` uses `llm.anthropic.model` from config when creating AnthropicProvider instances
-- `core/logging_config.py` - Structured JSON logging with context injection
-- `core/middleware.py` - Request context middleware for logging
+- `main.py` - FastAPI application with all API routes
+- `api/auth.py` - JWT auth service (SECRET_KEY from env, bcrypt passwords)
+- `core/middleware.py` - Request context middleware (JWT-based user extraction)
+- `config/cloud-backend.yaml` - Server configuration including API key env var names
 
 ## API Endpoints
 
-See `/docs/api/API_DESIGN_SPEC.md` Section 4 for complete Cloud Backend API specification.
+All endpoints use `/api/v1/` prefix.
 
-All endpoints use `/api/v1/` prefix and follow RESTful conventions.
+### Auth (no auth required)
+- `POST /api/v1/auth/login` - User login, returns access_token + refresh_token
+- `POST /api/v1/auth/register` - User registration (auto-login, returns tokens)
+- `POST /api/v1/auth/refresh` - Exchange refresh_token for new access_token
 
-### Key Endpoint Groups
+### Auth (JWT auth required)
+- `GET /api/v1/auth/me` - Get current user profile
+- `PUT /api/v1/auth/me` - Update profile (full_name)
+- `POST /api/v1/auth/change-password` - Change password
 
-- **Auth**: `/api/v1/auth/*` - User login/register
-- **Recordings**: `/api/v1/recordings/*` - Recording upload, analysis, MetaFlow generation
-- **MetaFlows**: `/api/v1/metaflows/*` - MetaFlow CRUD and Workflow generation
-- **Workflows**: `/api/v1/workflows/*` - Workflow CRUD, download, metadata, files
-- **Executions**: `/api/v1/executions/*` - Execution reporting
-- **Logs**: `/api/v1/logs/*` - Workflow log and diagnostic upload
-- **Intent Builder**: `/api/v1/intent-builder/sessions/*` - AI conversation sessions (SSE)
-- **Memory**: `/api/v1/memory/*` - Operation memory (add, query, stats, clear)
+### Memory (JWT auth required)
+- `POST /api/v1/memory/add` - Add recording to user's workflow memory
+- `POST /api/v1/memory/query` - Unified memory query (task/navigation/action)
+- `POST /api/v1/memory/phrase/query` - Query CognitivePhrase
+- `POST /api/v1/memory/state` - Get State by URL
+- `GET /api/v1/memory/stats` - User's memory statistics
+- `DELETE /api/v1/memory` - Clear user's private memory
+- `GET /api/v1/memory/phrases` - List user's CognitivePhrases
+- `GET /api/v1/memory/phrases/{id}` - Get phrase detail
+- `DELETE /api/v1/memory/phrases/{id}` - Delete phrase
+- `POST /api/v1/memory/share` - Share phrase to public
+- `GET /api/v1/memory/publish-status` - Check publish status
+- `POST /api/v1/memory/unpublish` - Unpublish phrase
+- `POST /api/v1/memory/workflow-query` - Reasoner workflow query
+- `POST /api/v1/memory/plan-route` - Reasoner path planning
+- `POST /api/v1/memory/plan` - PlannerAgent task analysis
+- `POST /api/v1/memory/learn` - Post-execution learning
 
-## Logging System
+### Public (no auth required)
+- `GET /api/v1/memory/stats/public` - Aggregated public stats
+- `GET /api/v1/memory/public/phrases` - List public phrases (supports `sort`, `limit`)
+- `GET /api/v1/memory/public/phrases/{id}` - Get public phrase detail
 
-### Structured JSON Logging
+### Utility
+- `GET /health` - Health check
+- `POST /api/v1/app/version-check` - Client version compatibility
 
-All logs use structured JSON format with request context:
-```json
-{
-  "timestamp": "2025-01-15T10:30:00.123Z",
-  "level": "INFO",
-  "service": "cloud_backend",
-  "module": "intent_builder",
-  "request_id": "req_abc123",
-  "user_id": "key_abc12345...",
-  "message": "Generated workflow successfully",
-  "extra": {"steps_count": 5}
-}
-```
+## Architecture
 
-### Request Context Injection
+- Server-side API keys: Embedding and LLM API keys are server-managed (from env vars), not user-provided
+- JWT auth: All memory endpoints require `Authorization: Bearer <token>` header
+- User isolation: Each user gets their own private SurrealDB database for memory
+- Public memory: Shared community memory for published CognitivePhrases
 
-`RequestContextMiddleware` automatically injects:
-- `request_id`: Generated per request for tracing
-- `user_id`: Extracted from X-Ami-API-Key header
-- `workflow_id`: Extracted from URL path
-- `session_id`: Extracted from URL path
+## Logging
 
-### Log Storage
-
-Uploaded logs are stored in:
-```
-{storage_base}/users/{user_id}/
-├── workflow_logs/{workflow_id}/{task_id}.json
-└── diagnostics/{diagnostic_id}.json
-```
-
-### Loki Integration
-
-Optional Loki integration via `logging.loki_url` config:
-- Direct push using `python-logging-loki`
-- Or file-based collection via Promtail
-
-See `deploy/logging/` for Loki + Grafana deployment configuration.
-
-## Data Flow
-
-```
-User Recording (with DOM snapshots) → Cloud Backend Storage
-    ↓
-intent_builder/extractors → Intent Graph
-    ↓
-User Query → intent_builder/generators → Workflow YAML
-    ↓
-[Background] Script Pre-generation → Workflow Directory
-```
-
-### Recording with DOM Snapshots
-
-Recordings can include DOM snapshots captured during navigation:
-```
-recordings/{recording_id}/
-├── operations.json      # User operations
-├── metadata.json        # Workflow association
-└── dom_snapshots/       # DOM captured at each URL
-    ├── {url_hash_1}.json
-    └── {url_hash_2}.json
-```
-
-### Script Pre-generation
-
-After workflow generation, scripts are pre-generated in the background:
-```
-workflows/{workflow_id}/
-├── workflow.yaml
-├── metadata.json        # Includes script_pregeneration status
-├── dom_snapshots/       # DOM snapshots from workflow execution
-│   ├── url_index.json   # Maps step_id -> DOM file
-│   └── {url_hash}.json  # Wrapped format: {"url":..., "step_id":..., "dom":{...}}
-└── {step_id}/           # Scripts stored directly in step directory
-    ├── find_element.py  # Browser agent script
-    ├── task.json        # Browser task definition
-    ├── extraction_script.py  # Scraper agent script
-    ├── dom_tools.py     # Scraper utilities
-    └── requirement.json # Scraper requirements
-```
-
-**Note**: `dom_data.json` is NOT saved permanently in step directories. During
-modification sessions, it's dynamically copied from `dom_snapshots/` using the
-`step_id` mapping in `url_index.json`. This ensures scripts always use the
-latest DOM captured during workflow execution.
-
-## See Also
-
-- `intent_builder/CONTEXT.md` for workflow generation details
+Structured JSON logging with request context injection (request_id, user_id from JWT).
