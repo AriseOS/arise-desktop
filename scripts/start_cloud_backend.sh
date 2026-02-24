@@ -97,6 +97,14 @@ if [ -f .env ]; then
     echo "🔑 Loaded environment from .env"
 fi
 
+# Activate venv
+if [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then
+    source "$PROJECT_ROOT/.venv/bin/activate"
+    echo "🐍 Activated venv: $(python --version)"
+else
+    echo "⚠️  No .venv found at $PROJECT_ROOT/.venv — using system python"
+fi
+
 echo "📍 Location: src/cloud_backend"
 echo "🔌 Port: 9000"
 if [ "$WITH_DB" = true ]; then
