@@ -119,7 +119,8 @@ class Sub2APIClient:
         """List users via Admin API.
 
         GET /api/v1/admin/users
-        Returns: {"users": [...], "total": int}
+        Returns: paginated dict {"items": [...], "total": int, "page": int, ...}.
+        Use _extract_items() to get the list of user dicts.
         """
         params = {"page": page, "per_page": per_page}
         if search:
@@ -149,11 +150,12 @@ class Sub2APIClient:
             resp.raise_for_status()
             return _extract_data(resp.json())
 
-    async def get_user_subscriptions(self, user_id: int) -> list:
+    async def get_user_subscriptions(self, user_id: int):
         """Get user's subscriptions (plan/group info) via Admin API.
 
         GET /api/v1/admin/users/:id/subscriptions
-        Returns: list of subscription objects with group info
+        Returns: paginated dict {"items": [...], "total": int, ...}.
+        Use _extract_items() to get the list of subscription dicts.
         """
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(
@@ -241,11 +243,12 @@ class Sub2APIClient:
             resp.raise_for_status()
             return _extract_data(resp.json())
 
-    async def get_user_api_keys(self, user_id: int) -> list:
+    async def get_user_api_keys(self, user_id: int):
         """Get user's API keys via Admin API.
 
         GET /api/v1/admin/users/:id/api-keys
-        Returns: list of API key objects
+        Returns: paginated dict {"items": [...], "total": int, ...}.
+        Use _extract_items() to get the list of API key dicts.
         """
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(

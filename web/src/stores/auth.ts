@@ -46,6 +46,11 @@ export const useAuthStore = defineStore('auth', () => {
       const { data } = await authApi.refresh(refreshToken.value)
       accessToken.value = data.access_token
       localStorage.setItem('access_token', data.access_token)
+      // Update refresh_token if the server rotated it
+      if (data.refresh_token) {
+        refreshToken.value = data.refresh_token
+        localStorage.setItem('refresh_token', data.refresh_token)
+      }
       return true
     } catch {
       return false

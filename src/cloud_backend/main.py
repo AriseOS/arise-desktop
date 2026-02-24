@@ -464,10 +464,12 @@ async def login(request: Request, data: LoginRequest):
         logger.error(f"Sub2api JWT missing user ID. Payload keys: {list(sub2api_payload.keys())}")
         raise AppError(ErrorCode.SERVICE_SUB2API_FAILED, "Login succeeded but user ID not found in token", status_code=502)
 
-    # Get username from sub2api
+    # Get username and email from sub2api
+    user_email = login_email
     try:
         user_info = await sub2api_client.get_user(int(sub2api_user_id))
         username = user_info.get("username") or user_info.get("email", "")
+        user_email = user_info.get("email", login_email)
     except Exception:
         username = data.username
 
@@ -487,6 +489,7 @@ async def login(request: Request, data: LoginRequest):
         refresh_token=refresh_token,
         user_id=str(sub2api_user_id),
         username=username,
+        email=user_email,
     )
 
 
@@ -534,6 +537,7 @@ async def register(request: Request, data: RegisterRequest):
         refresh_token=refresh_token,
         user_id=str(sub2api_user_id),
         username=data.username,
+        email=data.email,
     )
 
 

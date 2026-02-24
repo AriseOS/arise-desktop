@@ -22,6 +22,7 @@ class LoginResponse(BaseModel):
     refresh_token: str
     user_id: str
     username: str
+    email: str = ""
 
 
 class RegisterRequest(BaseModel):
@@ -36,6 +37,7 @@ class RegisterResponse(BaseModel):
     refresh_token: str
     user_id: str
     username: str
+    email: str = ""
 
 
 class RefreshTokenRequest(BaseModel):
