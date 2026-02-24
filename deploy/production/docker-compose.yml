@@ -70,7 +70,7 @@ services:
     expose:
       - "8000"
     volumes:
-      - surrealdb_data:/data
+      - ${AMI_SERVER_PATH:-~/ami-server}/surrealdb/data:/data
     environment:
       - TZ=${TZ:-Asia/Shanghai}
     networks:
@@ -114,7 +114,7 @@ services:
           sleep 86400
         done
     volumes:
-      - surrealdb_backups:/backups
+      - ${AMI_SERVER_PATH:-~/ami-server}/surrealdb/backups:/backups
     environment:
       - SURREALDB_USER=${SURREALDB_USER:-root}
       - SURREALDB_PASSWORD=${SURREALDB_PASSWORD:?SURREALDB_PASSWORD is required}
@@ -124,15 +124,6 @@ services:
         condition: service_healthy
     networks:
       - ami-network
-
-# =============================================================================
-# Volumes
-# =============================================================================
-volumes:
-  surrealdb_data:
-    driver: local
-  surrealdb_backups:
-    driver: local
 
 # =============================================================================
 # Networks
