@@ -38,6 +38,26 @@ def _extract_data(resp_json: dict) -> any:
     return payload
 
 
+def _extract_items(data: any) -> list:
+    """Normalize sub2api paginated or list responses into a plain list.
+
+    Sub2api list endpoints return paginated dicts: {"items": [...], "total": N, ...}.
+    This helper extracts the items list from either format.
+    """
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        return data.get("items", [])
+    return []
+
+
+def _extract_total(data: any, fallback_items: list) -> int:
+    """Extract total count from sub2api paginated response."""
+    if isinstance(data, dict):
+        return data.get("total", len(fallback_items))
+    return len(fallback_items)
+
+
 class Sub2APIClient:
     """Client for sub2api Admin + User APIs."""
 
@@ -242,15 +262,8 @@ class Sub2APIClient:
         through sub2api using their own API key.
         """
         data = await self.get_user_api_keys(user_id)
-        # sub2api returns paginated: {"items": [...], "total": N, ...}
-        # or a plain list depending on the endpoint version
-        if isinstance(data, dict):
-            items = data.get("items", [])
-        elif isinstance(data, list):
-            items = data
-        else:
-            return None
-        if items and len(items) > 0:
+        items = _extract_items(data)
+        if items:
             return items[0].get("key")
         return None
 

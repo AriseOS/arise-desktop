@@ -421,9 +421,10 @@ async def login(request: Request, data: LoginRequest):
     login_email = data.username
     if "@" not in data.username:
         try:
+            from services.sub2api_client import _extract_items
             result = await sub2api_client.list_users(page=1, per_page=1, search=data.username)
-            users = result.get("users", result) if isinstance(result, dict) else result
-            if users and isinstance(users, list) and len(users) > 0:
+            users = _extract_items(result)
+            if users:
                 # Find exact username match (search is fuzzy)
                 for u in users:
                     if u.get("username") == data.username:
@@ -594,10 +595,12 @@ async def get_me(
     # Determine plan from subscriptions
     plan = "free"
     try:
-        subs = await sub2api_client.get_user_subscriptions(int(user_id))
-        if subs and isinstance(subs, list) and len(subs) > 0:
+        from services.sub2api_client import _extract_items
+        subs_raw = await sub2api_client.get_user_subscriptions(int(user_id))
+        subs_list = _extract_items(subs_raw)
+        if subs_list:
             # Use the first active subscription's group name as the plan
-            for sub in subs:
+            for sub in subs_list:
                 if sub.get("status") == "active":
                     group_name = sub.get("group_name") or sub.get("group", {}).get("name", "")
                     if group_name:
@@ -773,10 +776,11 @@ async def list_api_keys(
     user_id: str = Depends(get_current_user_id),
 ):
     """List user's API keys from sub2api."""
+    from services.sub2api_client import _extract_items
     raw_keys = await sub2api_client.get_user_api_keys(int(user_id))
 
     keys = []
-    for k in (raw_keys or []):
+    for k in _extract_items(raw_keys):
         key_val = k.get("key", "")
         if len(key_val) > 8:
             preview = key_val[:5] + "..." + key_val[-4:]
@@ -875,12 +879,13 @@ async def admin_list_users(
 ):
     """List all users (admin only) — data from sub2api."""
     try:
+        from services.sub2api_client import _extract_items, _extract_total
         result = await sub2api_client.list_users(page, per_page, search or "")
-        raw_users = result.get("users", result) if isinstance(result, dict) else result
-        total = result.get("total", len(raw_users)) if isinstance(result, dict) else len(raw_users)
+        raw_users = _extract_items(result)
+        total = _extract_total(result, raw_users)
 
         items = []
-        for u in (raw_users or []):
+        for u in raw_users:
             items.append(AdminUserItem(
                 user_id=str(u.get("id")),
                 username=u.get("username", ""),
@@ -952,9 +957,9 @@ async def admin_system_health(
 
     # Get user counts from sub2api
     try:
+        from services.sub2api_client import _extract_total
         result = await sub2api_client.list_users(1, 1)
-        if isinstance(result, dict):
-            users_total = result.get("total", 0)
+        users_total = _extract_total(result, [])
         # Active count not directly available from sub2api list, use total as approximation
         users_active = users_total
     except Exception as e:

@@ -52,10 +52,11 @@ def create_admin(args):
             if e.response.status_code == 409:
                 print(f"User {args.email} already exists, promoting to admin...")
                 # Need to find user ID — list users and search
+                from services.sub2api_client import _extract_items
                 result = await client.list_users(1, 100, args.email)
-                users = result.get("users", result) if isinstance(result, dict) else result
+                users = _extract_items(result)
                 user_id = None
-                for u in (users or []):
+                for u in users:
                     if u.get("email") == args.email:
                         user_id = u["id"]
                         break
@@ -90,8 +91,9 @@ def list_users(args):
     client = _get_sub2api_client()
 
     async def _run():
+        from services.sub2api_client import _extract_items
         result = await client.list_users(1, 100)
-        users = result.get("users", result) if isinstance(result, dict) else result
+        users = _extract_items(result)
 
         if not users:
             print("No users found.")
