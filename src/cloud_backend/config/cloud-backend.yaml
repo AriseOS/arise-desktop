@@ -3,7 +3,7 @@
 
 # App Version Control
 app:
-  minimum_version: "0.4.0"  # Minimum required client app version (force upgrade if below)
+  minimum_version: "0.6.0"  # Minimum required client app version (force upgrade if below)
 
 # Server Configuration
 server:

@@ -38,7 +38,7 @@ rerank_api_key = None  # Server-side rerank API key (not per-user)
 app = FastAPI(
     title="Ami Cloud Backend",
     description="Memory-as-a-Service + Auth",
-    version="3.1.0"
+    version="0.6.0"
 )
 
 # Register structured error handlers
@@ -309,7 +309,7 @@ def health_check():
     return {
         "status": "ok",
         "service": "cloud-backend",
-        "version": "3.1.0"
+        "version": "0.6.0"
     }
 
 
@@ -317,7 +317,7 @@ def health_check():
 def root():
     return {
         "service": "Ami Cloud Backend",
-        "version": "3.1.0",
+        "version": "0.6.0",
         "docs": "/docs"
     }
 
