@@ -428,6 +428,26 @@ async def refresh_token(data: dict):
     return {"access_token": access_token}
 
 
+@app.get("/api/v1/auth/credentials")
+async def get_credentials(user_id: str = Depends(get_current_user_id)):
+    """
+    Return LLM API key for the authenticated user.
+    The daemon stores this locally and uses it for LLM calls via sub2api proxy.
+
+    Returns: {"api_key": "sk-xxx"}
+    """
+    from database.models import SessionLocal, User
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == int(user_id)).first()
+        if not user or not user.sub2api_api_key:
+            raise HTTPException(403, "User has no API key provisioned")
+        return {"api_key": user.sub2api_api_key}
+    finally:
+        db.close()
+
+
 @app.get("/api/v1/auth/me")
 async def get_me(
     user_id: str = Depends(get_current_user_id),
@@ -1258,6 +1278,15 @@ async def list_cognitive_phrases(
         import traceback
         traceback.print_exc()
         raise HTTPException(500, f"Failed to list cognitive phrases: {str(e)}")
+
+
+@app.get("/api/v1/memory/phrases/public")
+async def list_public_phrases_compat(
+    limit: Optional[int] = 50,
+    sort: Optional[str] = "popular",
+):
+    """Compatibility alias for /api/v1/memory/public/phrases (ami-desktop uses this path)."""
+    return await list_public_phrases(limit=limit, sort=sort)
 
 
 @app.get("/api/v1/memory/phrases/{phrase_id}")

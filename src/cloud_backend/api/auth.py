@@ -8,6 +8,7 @@ from typing import Optional
 
 from passlib.context import CryptContext
 from jose import JWTError, jwt
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from database.models import User
 from core.config_service import get_config
@@ -74,8 +75,10 @@ class AuthService:
             return None
 
     def authenticate_user(self, db: Session, username: str, password: str) -> Optional[User]:
-        """Authenticate user by username and password"""
-        user = db.query(User).filter(User.username == username).first()
+        """Authenticate user by username or email and password"""
+        user = db.query(User).filter(
+            or_(User.username == username, User.email == username)
+        ).first()
         if not user:
             logger.warning(f"Authentication failed: user not found: {username}")
             return None

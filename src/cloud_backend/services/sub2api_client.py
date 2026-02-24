@@ -20,10 +20,12 @@ class Sub2APIClient:
     def __init__(self, base_url: str, admin_api_key: str):
         """
         Args:
-            base_url: Sub2api base URL (e.g., "https://api.ariseos.com/api")
+            base_url: Sub2api gateway base URL (e.g., "http://localhost:8080")
+                      Admin/user API routes are at {base_url}/api/v1/...
             admin_api_key: Admin API key for sub2api (x-api-key header)
         """
         self.base_url = base_url.rstrip("/")
+        self.api_base = f"{self.base_url}/api"
         self.admin_api_key = admin_api_key
 
     def _admin_headers(self) -> dict:
@@ -40,7 +42,7 @@ class Sub2APIClient:
         """
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
-                f"{self.base_url}/v1/admin/users",
+                f"{self.api_base}/v1/admin/users",
                 json={
                     "email": email,
                     "password": password,
@@ -61,7 +63,7 @@ class Sub2APIClient:
         """
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
-                f"{self.base_url}/v1/auth/login",
+                f"{self.api_base}/v1/auth/login",
                 json={
                     "email": email,
                     "password": password,
@@ -90,7 +92,7 @@ class Sub2APIClient:
         """
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
-                f"{self.base_url}/v1/keys",
+                f"{self.api_base}/v1/keys",
                 json={"name": name},
                 headers={
                     "Authorization": f"Bearer {user_jwt}",
@@ -144,7 +146,7 @@ class Sub2APIClient:
         """
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(
-                f"{self.base_url}/v1/admin/users/{sub2api_user_id}/usage",
+                f"{self.api_base}/v1/admin/users/{sub2api_user_id}/usage",
                 params={"period": period},
                 headers=self._admin_headers(),
             )
@@ -160,7 +162,7 @@ class Sub2APIClient:
         """
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(
-                f"{self.base_url}/v1/admin/users/{sub2api_user_id}/api-keys",
+                f"{self.api_base}/v1/admin/users/{sub2api_user_id}/api-keys",
                 headers=self._admin_headers(),
             )
             resp.raise_for_status()

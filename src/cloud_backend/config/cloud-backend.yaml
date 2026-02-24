@@ -40,8 +40,8 @@ database:
 llm:
   default_provider: anthropic  # Options: anthropic, openai
 
-  # Proxy/relay URL (required) - sub2api gateway
-  proxy_url: "https://api.ariseos.com/api"
+  # Proxy/relay URL (required) - sub2api gateway base URL (no path suffix)
+  proxy_url: "http://localhost:8080"
 
   # Anthropic Configuration
   anthropic:
@@ -122,7 +122,7 @@ embedding:
   provider: openai  # Options: openai, local_bge (openai works with OpenAI-compatible APIs)
   model: BAAI/bge-m3  # Model name (supports Chinese/English, 8K tokens)
   dimension: 1024  # Embedding vector dimension
-  base_url: https://api.ariseos.com/openai/v1  # OpenAI-compatible endpoint (via sub2api)
+  base_url: http://localhost:8080/openai/v1  # OpenAI-compatible endpoint (via sub2api)
 
 # Reasoner Configuration
 # Memory retrieval and workflow planning
