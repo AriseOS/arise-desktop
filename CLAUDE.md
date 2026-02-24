@@ -41,17 +41,24 @@ This file provides guidance to Claude Code when working with this repository.
 ```
 Ami/
 ├── src/
-│   ├── cloud_backend/           # Server-side services
-│   │   └── intent_builder/      # Intent-based workflow generation
+│   ├── cloud_backend/           # FastAPI server (Memory-as-a-Service + Auth proxy)
+│   │   ├── api/                 # Routes, schemas, errors
+│   │   ├── core/                # Config, rate limiting, middleware
+│   │   ├── services/            # Sub2API client, storage
+│   │   └── config/              # cloud-backend.yaml
 │   └── common/                  # Shared utilities
+│       ├── memory/              # Memory system (SurrealDB graph store)
 │       └── llm/                 # LLM provider abstraction
-└── docs/                        # Human-readable docs (NOT for models - use CONTEXT.md instead)
+├── web/                         # Vue 3 + TypeScript management frontend
+└── deploy/                      # Docker Compose, Caddy, SurrealDB configs
 ```
 
 ## Key Paths
 
-- Intent Builder: `src/cloud_backend/intent_builder/`
+- Cloud Backend: `src/cloud_backend/`
+- Memory System: `src/common/memory/`
 - LLM Providers: `src/common/llm/`
+- Config: `src/cloud_backend/config/cloud-backend.yaml`
 
 ## Environment
 
@@ -66,8 +73,8 @@ Ami/
 
 ```bash
 # Python backend (ensure venv is activated)
-pip install -r requirements.txt
-uvicorn src.cloud_backend.main:app --reload
+pip install -e ".[cloud,memory]"
+./scripts/start_cloud_backend.sh
 
 # Code quality
 black . --line-length 88

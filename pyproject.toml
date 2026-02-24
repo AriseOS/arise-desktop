@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ami"
-version = "0.2.3"
+version = "0.4.0"
 description = "Natural Language Driven Agent Platform"
 authors = [
     {name = "Ami Team", email = "team@ami.com"}

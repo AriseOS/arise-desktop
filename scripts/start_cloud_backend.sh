@@ -106,7 +106,7 @@ else
 fi
 
 echo "📍 Location: src/cloud_backend"
-echo "🔌 Port: 9000"
+echo "🔌 Port: 9090"
 if [ "$WITH_DB" = true ]; then
     echo "🗄️  Database: SurrealDB (ws://localhost:8000/rpc)"
 fi
