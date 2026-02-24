@@ -32,10 +32,10 @@ RUN groupadd -r ami && useradd -r -g ami -d /app ami && \
     mkdir -p /app/data && chown -R ami:ami /app
 USER ami
 
-EXPOSE 9000
+EXPOSE 9090
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:9000/health')" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:9090/health')" || exit 1
 
 # Run from cloud_backend directory (imports: from core.config_service, from api.auth, etc.)
-CMD ["python", "-m", "uvicorn", "src.cloud_backend.main:app", "--host", "0.0.0.0", "--port", "9000"]
+CMD ["python", "-m", "uvicorn", "src.cloud_backend.main:app", "--host", "0.0.0.0", "--port", "9090"]

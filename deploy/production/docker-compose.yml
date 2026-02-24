@@ -30,7 +30,7 @@ services:
     container_name: ami-cloud-backend
     restart: unless-stopped
     ports:
-      - "${BIND_HOST:-127.0.0.1}:9000:9000"
+      - "${BIND_HOST:-127.0.0.1}:9090:9090"
     environment:
       # JWT
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
@@ -52,7 +52,7 @@ services:
     networks:
       - ami-network
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9090/health')"]
       interval: 30s
       timeout: 10s
       retries: 3

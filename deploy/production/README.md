@@ -45,7 +45,7 @@ docker compose up -d
 docker compose logs -f cloud-backend
 
 # 5. Verify
-curl http://localhost:9000/health
+curl http://localhost:9090/health
 ```
 
 ## Environment Variables
