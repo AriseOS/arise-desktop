@@ -79,6 +79,10 @@ router.beforeEach((to) => {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
 
+  if (to.meta.requiresAdmin && !auth.isAdmin) {
+    return { name: 'dashboard' }
+  }
+
   if (to.meta.guest && auth.isAuthenticated) {
     return { name: 'dashboard' }
   }
