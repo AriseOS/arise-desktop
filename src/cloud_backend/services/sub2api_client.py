@@ -241,9 +241,17 @@ class Sub2APIClient:
         Used for per-user LLM access — each user's requests are routed
         through sub2api using their own API key.
         """
-        keys = await self.get_user_api_keys(user_id)
-        if keys and isinstance(keys, list) and len(keys) > 0:
-            return keys[0].get("key")
+        data = await self.get_user_api_keys(user_id)
+        # sub2api returns paginated: {"items": [...], "total": N, ...}
+        # or a plain list depending on the endpoint version
+        if isinstance(data, dict):
+            items = data.get("items", [])
+        elif isinstance(data, list):
+            items = data
+        else:
+            return None
+        if items and len(items) > 0:
+            return items[0].get("key")
         return None
 
     async def delete_api_key(self, user_id: int, key_id: int) -> None:
