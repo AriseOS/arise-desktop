@@ -129,7 +129,7 @@ class MaaSRerankModel(RerankModel):
             payload["top_k"] = top_k
 
         # Make API request
-        response_data = self._make_request("/v1/rerank", payload)
+        response_data = self._make_request("/rerank", payload)
 
         # Parse response
         results = []
