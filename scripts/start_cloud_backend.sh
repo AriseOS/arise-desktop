@@ -89,6 +89,14 @@ fi
 # Start Cloud Backend
 cd "$PROJECT_ROOT/src/cloud_backend"
 
+# Load .env if present
+if [ -f .env ]; then
+    set -a
+    source .env
+    set +a
+    echo "🔑 Loaded environment from .env"
+fi
+
 echo "📍 Location: src/cloud_backend"
 echo "🔌 Port: 9000"
 if [ "$WITH_DB" = true ]; then

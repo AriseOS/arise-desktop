@@ -117,12 +117,22 @@ sub2api:
   admin_api_key_env: SUB2API_ADMIN_API_KEY  # Environment variable for admin API key
 
 # Embedding Model Configuration
-# Per-user API keys route through sub2api. These settings configure model and endpoint.
+# Server-side API key (not per-user) — embedding providers don't go through sub2api.
 embedding:
   provider: openai  # Options: openai, local_bge (openai works with OpenAI-compatible APIs)
   model: BAAI/bge-m3  # Model name (supports Chinese/English, 8K tokens)
   dimension: 1024  # Embedding vector dimension
-  base_url: http://localhost:8080/openai/v1  # OpenAI-compatible endpoint (via sub2api)
+  base_url: https://api.siliconflow.cn/v1  # OpenAI-compatible endpoint (direct to provider)
+  api_key_env: EMBEDDING_API_KEY  # Environment variable for embedding API key
+
+# Rerank Model Configuration
+# Server-side API key (not per-user) — rerank providers don't go through sub2api.
+# NOTE: base_url should NOT include /v1 — MaaSRerankModel appends /v1/rerank internally.
+rerank:
+  provider: maas  # Options: maas, local_bge
+  model: BAAI/bge-reranker-v2-m3  # Rerank model name
+  base_url: https://api.siliconflow.cn  # Base URL without /v1 (MaaSRerankModel appends /v1/rerank)
+  api_key_env: RERANK_API_KEY  # Environment variable for rerank API key
 
 # Reasoner Configuration
 # Memory retrieval and workflow planning

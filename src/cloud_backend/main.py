@@ -31,6 +31,8 @@ config_service = CloudConfigService()
 # Global service instances
 storage_service = None
 sub2api_client = None  # Sub2API admin client for per-user token tracking
+embedding_api_key = None  # Server-side embedding API key (not per-user)
+rerank_api_key = None  # Server-side rerank API key (not per-user)
 
 # Create FastAPI application
 app = FastAPI(
@@ -155,6 +157,23 @@ async def startup_event():
                 sys.exit(1)
         print(f"Config validated: LLM proxy={config_service.get('llm.proxy_url')}")
 
+        # 5b. Load server-side API keys for embedding and rerank (not per-user)
+        global embedding_api_key, rerank_api_key
+
+        embedding_key_env = config_service.get("embedding.api_key_env", "EMBEDDING_API_KEY")
+        embedding_api_key = os.environ.get(embedding_key_env)
+        if not embedding_api_key:
+            print(f"FATAL: {embedding_key_env} environment variable required for embedding service")
+            sys.exit(1)
+        print(f"Embedding: server-side key loaded from ${embedding_key_env}")
+
+        rerank_key_env = config_service.get("rerank.api_key_env", "RERANK_API_KEY")
+        rerank_api_key = os.environ.get(rerank_key_env)
+        if rerank_api_key:
+            print(f"Rerank: server-side key loaded from ${rerank_key_env}")
+        else:
+            print(f"Rerank: ${rerank_key_env} not set, rerank service disabled")
+
         # 6. Initialize sub2api client (per-user API key provisioning + token tracking)
         sub2api_admin_key_env = config_service.get("sub2api.admin_api_key_env", "SUB2API_ADMIN_API_KEY")
         sub2api_admin_key = os.environ.get(sub2api_admin_key_env)
@@ -233,6 +252,54 @@ def root():
         "service": "Ami Cloud Backend",
         "version": "3.0.0",
         "docs": "/docs"
+    }
+
+
+@app.post("/api/v1/test/embedding")
+async def test_embedding(
+    data: dict,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Test embedding service connectivity. Body: {"text": "hello world"}"""
+    text = data.get("text", "hello world")
+    from src.common.llm import get_cached_embedding_service
+    service = get_cached_embedding_service(
+        api_key=embedding_api_key,
+        base_url=config_service.get("embedding.base_url"),
+        model=config_service.get("embedding.model"),
+        dimension=config_service.get("embedding.dimension"),
+    )
+    result = service.embed(text)
+    return {
+        "success": True,
+        "model": result.model,
+        "dimension": result.dimension,
+        "usage": result.usage,
+        "embedding_preview": result.to_list()[:5],
+    }
+
+
+@app.post("/api/v1/test/rerank")
+async def test_rerank(
+    data: dict,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Test rerank service connectivity. Body: {"query": "...", "documents": ["...", "..."]}"""
+    if not rerank_api_key:
+        raise HTTPException(503, "Rerank service not configured (RERANK_API_KEY not set)")
+    query = data.get("query", "search engine")
+    documents = data.get("documents", ["Google is a search engine", "Python is a programming language"])
+    from src.common.memory.services.rerank_model.maas_rerank_model import MaaSRerankModel
+    model = MaaSRerankModel(
+        model_name=config_service.get("rerank.model", "BAAI/bge-reranker-v2-m3"),
+        api_key=rerank_api_key,
+        base_url=config_service.get("rerank.base_url"),
+    )
+    result = model.rerank(query, documents)
+    return {
+        "success": True,
+        "model": result.model,
+        "results": [{"index": r.index, "score": r.score, "document": r.document} for r in result.results],
     }
 
 
@@ -597,12 +664,12 @@ async def add_to_memory(
     try:
         from src.common.memory.thinker.workflow_processor import WorkflowProcessor
 
-        # Setup embedding service with per-user API key
+        # Setup embedding service with server-side API key
         embedding_service = None
         if generate_embeddings:
             from src.common.llm import get_cached_embedding_service
             embedding_service = get_cached_embedding_service(
-                api_key=llm_api_key,
+                api_key=embedding_api_key,
                 base_url=config_service.get("embedding.base_url"),
                 model=config_service.get("embedding.model"),
                 dimension=config_service.get("embedding.dimension"),
@@ -1616,7 +1683,7 @@ async def _get_reasoner_for_user(
     )
 
     embedding_service = get_cached_embedding_service(
-        api_key=llm_api_key,
+        api_key=embedding_api_key,
         base_url=config_service.get("embedding.base_url"),
         model=config_service.get("embedding.model"),
         dimension=config_service.get("embedding.dimension"),
@@ -1796,7 +1863,7 @@ async def plan_with_memory(
         )
 
         embedding_service = get_cached_embedding_service(
-            api_key=llm_api_key,
+            api_key=embedding_api_key,
             base_url=config_service.get("embedding.base_url"),
             model=config_service.get("embedding.model"),
             dimension=config_service.get("embedding.dimension"),
@@ -1868,7 +1935,7 @@ async def learn_from_execution(
         )
 
         embedding_service = get_cached_embedding_service(
-            api_key=llm_api_key,
+            api_key=embedding_api_key,
             base_url=config_service.get("embedding.base_url"),
             model=config_service.get("embedding.model"),
             dimension=config_service.get("embedding.dimension"),
