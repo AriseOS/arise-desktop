@@ -20,18 +20,19 @@ from core.config_service import get_config
 
 logger = logging.getLogger(__name__)
 
-# JWT configuration - SECRET_KEY must be set as environment variable
-SECRET_KEY = os.environ.get("JWT_SECRET_KEY")
+_config = get_config()
+
+# JWT configuration - read env var name and algorithm from yaml
+_secret_key_env = _config.get("auth.secret_key_env", "JWT_SECRET_KEY")
+SECRET_KEY = os.environ.get(_secret_key_env)
 if not SECRET_KEY:
     raise RuntimeError(
-        "JWT_SECRET_KEY environment variable is required. "
+        f"{_secret_key_env} environment variable is required. "
         "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
     )
 
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60
-
-_config = get_config()
+ALGORITHM = _config.get("auth.algorithm", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = _config.get("auth.access_token_expire_minutes", 60)
 REFRESH_TOKEN_EXPIRE_DAYS = _config.get("auth.refresh_token_expire_days", 30)
 
 # Fernet key for encrypting embedded sub2api JWTs (s2a claim).
