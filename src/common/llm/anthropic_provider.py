@@ -283,7 +283,15 @@ class AnthropicProvider(BaseProvider):
             client_kwargs["base_url"] = self.base_url
             logger.info(f"Using custom base URL: {self.base_url}")
 
-        self._client = Anthropic(**client_kwargs)
+        # Temporarily remove ANTHROPIC_AUTH_TOKEN env var during client init.
+        # SDK auto-reads it and adds Authorization: Bearer header, which conflicts
+        # with sub2api proxy (sub2api rejects the Bearer token as invalid API key).
+        saved_auth_token = os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
+        try:
+            self._client = Anthropic(**client_kwargs)
+        finally:
+            if saved_auth_token is not None:
+                os.environ["ANTHROPIC_AUTH_TOKEN"] = saved_auth_token
 
         logger.info(f"Initialized Anthropic client with model {self.model_name}")
     
