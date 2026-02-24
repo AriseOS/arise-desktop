@@ -1,0 +1,59 @@
+# Ami Production - Caddy Reverse Proxy
+#
+# Routes:
+#   /api/*  → cloud-backend:9000  (Cloud Backend API)
+#   /docs   → cloud-backend:9000  (OpenAPI docs)
+#   /health → cloud-backend:9000  (Health check)
+#   /*      → web frontend SPA    (static files)
+
+{$DOMAIN:localhost} {
+    # Security headers
+    header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+    header X-Content-Type-Options "nosniff"
+    header X-Frame-Options "DENY"
+    header Referrer-Policy "strict-origin-when-cross-origin"
+
+    # API routes → Cloud Backend
+    handle /api/* {
+        reverse_proxy cloud-backend:9000 {
+            health_uri /health
+            health_interval 30s
+            health_timeout 10s
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
+    # OpenAPI docs
+    handle /docs {
+        reverse_proxy cloud-backend:9000
+    }
+    handle /openapi.json {
+        reverse_proxy cloud-backend:9000
+    }
+
+    # Health check passthrough
+    handle /health {
+        reverse_proxy cloud-backend:9000
+    }
+
+    # Web frontend SPA (static files)
+    handle {
+        root * /srv/web/dist
+        try_files {path} /index.html
+        file_server
+    }
+
+    # Request size limit
+    request_body {
+        max_size 10MB
+    }
+
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 100mb
+            roll_keep 5
+        }
+    }
+}

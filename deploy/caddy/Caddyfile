@@ -1,0 +1,67 @@
+# Ami Cloud Backend - Caddy Reverse Proxy
+#
+# Caddy provides:
+# - Automatic HTTPS via Let's Encrypt
+# - HTTP -> HTTPS redirect
+# - Reverse proxy to FastAPI backend
+# - HSTS headers
+# - Static file serving for web frontend (when deployed)
+#
+# Usage:
+#   Production: Replace {$DOMAIN} with your domain, or set DOMAIN env var
+#   Development: Use localhost block below
+#
+# Environment variables:
+#   DOMAIN - Production domain (e.g., api.ariseos.com)
+#   BACKEND_HOST - Backend host:port (default: localhost:9090)
+
+# Production configuration
+{$DOMAIN:api.ariseos.com} {
+    # HSTS (Caddy enables this by default for HTTPS, explicit for clarity)
+    header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+
+    # CSP header
+    header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
+
+    # Reverse proxy to FastAPI backend
+    reverse_proxy {$BACKEND_HOST:localhost:9090} {
+        # Health check
+        health_uri /health
+        health_interval 30s
+        health_timeout 10s
+
+        # Pass client IP
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    # Request size limit (10MB)
+    request_body {
+        max_size 10MB
+    }
+
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 100mb
+            roll_keep 5
+        }
+    }
+}
+
+# Web frontend (when deployed)
+# Uncomment and configure when web SPA is ready
+# {$WEB_DOMAIN:app.ariseos.com} {
+#     root * /srv/web/dist
+#     file_server
+#
+#     # SPA fallback: serve index.html for all non-file routes
+#     try_files {path} /index.html
+#
+#     # API proxy
+#     handle /api/* {
+#         reverse_proxy {$BACKEND_HOST:localhost:9090}
+#     }
+#
+#     header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+# }

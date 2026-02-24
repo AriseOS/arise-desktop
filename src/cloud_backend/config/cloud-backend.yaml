@@ -20,20 +20,9 @@ storage:
   base_path: ~/ami-server  # Base path for server-side file storage
 
 # Database Configuration
-database:
-  type: sqlite  # Options: sqlite, postgresql
-
-  # SQLite Configuration (default)
-  sqlite:
-    path: ~/ami-server/database/ami.db
-
-  # PostgreSQL Configuration (uncomment to use)
-  # postgresql:
-  #   host: localhost
-  #   port: 5432
-  #   database: ami
-  #   user: ami_user
-  #   password_env: DB_PASSWORD
+# User data is stored in sub2api's PostgreSQL (no local users table).
+# This section configures SurrealDB for memory storage — see graph_store below.
+# Legacy SQLite config has been removed.
 
 # LLM Configuration
 # Per-user API keys are managed by sub2api. These settings configure model and proxy routing.
@@ -63,6 +52,25 @@ auth:
   access_token_expire_minutes: 60  # 1 hour
   refresh_token_expire_days: 30
 
+# Email / Verification / Password Reset
+# These features are proxied to sub2api which handles email sending, verification codes,
+# and password reset tokens. Configure email settings in sub2api, not here.
+# Only the frontend base URL is needed for password reset email links.
+email:
+  base_url: "https://app.ariseos.com"  # Frontend URL (used in sub2api password reset emails)
+
+# Rate Limiting Configuration
+rate_limit:
+  enabled: true
+  storage: memory  # Options: memory, redis (memory = in-process, redis for multi-worker)
+  # redis_url: redis://localhost:6379/0  # Required when storage: redis
+  # Per-endpoint limits (format: "count/period" where period is second/minute/hour/day)
+  auth_login: "5/minute"
+  auth_register: "3/minute"
+  auth_password_reset: "3/minute"
+  api_default: "60/minute"
+  public_default: "30/minute"
+
 # Logging Configuration
 logging:
   level: INFO  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
@@ -86,7 +94,9 @@ cors:
     - PUT
     - DELETE
   allow_headers:
-    - "*"
+    - Authorization
+    - Content-Type
+    - X-Request-ID
 
 # Graph Store Configuration
 # Backend for Memory graph storage

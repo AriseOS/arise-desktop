@@ -1,7 +1,9 @@
 """
 Cloud Backend Middleware
 
-Provides request context injection for logging and tracing.
+Provides:
+1. Request context injection for logging and tracing
+2. Security response headers (X-Content-Type-Options, X-Frame-Options, etc.)
 """
 
 import time
@@ -18,6 +20,22 @@ from .logging_config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add security response headers to all responses."""
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        # HSTS: only add when behind HTTPS (Caddy handles TLS termination)
+        # The Strict-Transport-Security header is added by Caddy, not here,
+        # to avoid issues when running locally over HTTP during development.
+        return response
 
 
 class RequestContextMiddleware(BaseHTTPMiddleware):

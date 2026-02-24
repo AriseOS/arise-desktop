@@ -1,6 +1,17 @@
 # Cloud Backend
 
-Memory-as-a-Service + Auth platform for Ami. Provides JWT-based authentication and memory endpoints with server-side API keys.
+Memory-as-a-Service + Auth proxy for Ami (v3.2.0). All user management delegated to sub2api — Cloud Backend has NO local users table.
+
+## Architecture
+
+- **No local users table**: Sub2api's PostgreSQL is the single source of truth for all user data (accounts, passwords, roles, status, subscriptions)
+- **Cloud Backend = proxy layer**: Auth endpoints delegate to sub2api, memory endpoints use SurrealDB
+- **JWT auth**: Cloud Backend issues its own JWT tokens (user_id = sub2api user ID)
+- **Server-side API keys**: Embedding and rerank API keys are server-managed (env vars)
+- **Per-user LLM keys**: Via sub2api integration (provisioned at registration)
+- **User isolation**: Each user gets own private SurrealDB database for memory
+- **Public memory**: Shared community memory for published CognitivePhrases
+- **HTTPS**: Caddy reverse proxy with auto Let's Encrypt (deploy/caddy/)
 
 ## Dependencies
 
@@ -8,83 +19,61 @@ Memory-as-a-Service + Auth platform for Ami. Provides JWT-based authentication a
 
 Memory system uses SurrealDB for persistent graph storage.
 
-```bash
-docker run -d --name surrealdb \
-  -p 8000:8000 \
-  surrealdb/surrealdb:latest \
-  start --allow-experimental record_references --user root --pass your_password
-```
+### Sub2api (Required for User Management)
+
+Sub2api manages users, API keys, subscriptions, email verification, password reset. Cloud Backend communicates via Admin API (`x-api-key`) and User API (`Bearer JWT`).
 
 ### Environment Variables (Required)
 
 ```bash
 export JWT_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 export EMBEDDING_API_KEY="your-embedding-api-key"
-export LLM_API_KEY="your-llm-api-key"
+export SUB2API_ADMIN_API_KEY="your-sub2api-admin-key"
+# Optional:
+export RERANK_API_KEY="your-rerank-api-key"
 ```
 
 ## Directories
 
-- `api/` - Authentication (auth.py with JWT-based AuthService)
-- `core/` - Config service, logging, middleware
-- `database/` - SQLAlchemy models (User)
-- `services/` - Storage service (minimal, filesystem management)
+- `api/` - JWT service, Pydantic schemas, structured error codes
+- `core/` - Config service, logging, middleware (security headers), rate limiter
+- `services/` - Storage service, Sub2API client (all user operations)
 - `config/` - YAML configuration
+- `deploy/caddy/` - Caddy reverse proxy for HTTPS
 
 ## Key Files
 
-- `main.py` - FastAPI application with all API routes
-- `api/auth.py` - JWT auth service (SECRET_KEY from env, bcrypt passwords)
-- `core/middleware.py` - Request context middleware (JWT-based user extraction)
-- `config/cloud-backend.yaml` - Server configuration including API key env var names
+- `main.py` - FastAPI application with all API routes (typed Pydantic models)
+- `api/auth.py` - JWT token creation/verification only (no user database)
+- `api/schemas.py` - Pydantic request/response models for all endpoints
+- `api/errors.py` - Structured error codes (ErrorCode enum, AppError, exception handlers)
+- `services/sub2api_client.py` - Sub2API client (user CRUD, API keys, auth proxying)
+- `core/middleware.py` - Request context + security headers middleware
+- `core/rate_limiter.py` - slowapi rate limiting per endpoint
+- `config/cloud-backend.yaml` - Server configuration
+- `cli.py` - Admin CLI (create-admin, list-users) via sub2api
 
-## API Endpoints
+## API Patterns
 
-All endpoints use `/api/v1/` prefix.
+### User Data Flow
 
-### Auth (no auth required)
-- `POST /api/v1/auth/login` - User login, returns access_token + refresh_token
-- `POST /api/v1/auth/register` - User registration (auto-login, returns tokens)
-- `POST /api/v1/auth/refresh` - Exchange refresh_token for new access_token
+```
+Client → Cloud Backend (JWT auth) → sub2api Admin API (user data)
+                                   → SurrealDB (memory data)
+```
 
-### Auth (JWT auth required)
-- `GET /api/v1/auth/me` - Get current user profile
-- `PUT /api/v1/auth/me` - Update profile (full_name)
-- `POST /api/v1/auth/change-password` - Change password
+Registration: `sub2api.register()` creates user + API key in sub2api → Cloud Backend issues JWT with `sub=sub2api_user_id`.
 
-### Memory (JWT auth required)
-- `POST /api/v1/memory/add` - Add recording to user's workflow memory
-- `POST /api/v1/memory/query` - Unified memory query (task/navigation/action)
-- `POST /api/v1/memory/phrase/query` - Query CognitivePhrase
-- `POST /api/v1/memory/state` - Get State by URL
-- `GET /api/v1/memory/stats` - User's memory statistics
-- `DELETE /api/v1/memory` - Clear user's private memory
-- `GET /api/v1/memory/phrases` - List user's CognitivePhrases
-- `GET /api/v1/memory/phrases/{id}` - Get phrase detail
-- `DELETE /api/v1/memory/phrases/{id}` - Delete phrase
-- `POST /api/v1/memory/share` - Share phrase to public
-- `GET /api/v1/memory/publish-status` - Check publish status
-- `POST /api/v1/memory/unpublish` - Unpublish phrase
-- `POST /api/v1/memory/workflow-query` - Reasoner workflow query
-- `POST /api/v1/memory/plan-route` - Reasoner path planning
-- `POST /api/v1/memory/plan` - PlannerAgent task analysis
-- `POST /api/v1/memory/learn` - Post-execution learning
+### Structured Error Responses
 
-### Public (no auth required)
-- `GET /api/v1/memory/stats/public` - Aggregated public stats
-- `GET /api/v1/memory/public/phrases` - List public phrases (supports `sort`, `limit`)
-- `GET /api/v1/memory/public/phrases/{id}` - Get public phrase detail
+All errors return unified format:
+```json
+{"success": false, "error": {"code": "AUTH_INVALID_CREDENTIALS", "message": "..."}}
+```
 
-### Utility
-- `GET /health` - Health check
-- `POST /api/v1/app/version-check` - Client version compatibility
+### Security Headers
 
-## Architecture
-
-- Server-side API keys: Embedding and LLM API keys are server-managed (from env vars), not user-provided
-- JWT auth: All memory endpoints require `Authorization: Bearer <token>` header
-- User isolation: Each user gets their own private SurrealDB database for memory
-- Public memory: Shared community memory for published CognitivePhrases
+`SecurityHeadersMiddleware` adds X-Content-Type-Options, X-Frame-Options, X-XSS-Protection, Referrer-Policy. CORS `allow_headers` restricted to: Authorization, Content-Type, X-Request-ID.
 
 ## Logging
 

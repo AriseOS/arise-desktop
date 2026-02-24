@@ -15,11 +15,6 @@ class CloudConfigService(ConfigService):
             env_prefix="CLOUD_BACKEND"
         )
 
-    def get_db_path(self) -> Path:
-        """Get database path (for SQLite)"""
-        db_path = self.get("database.sqlite.path", "~/.ami-server/database/ami.db")
-        return Path(db_path).expanduser().resolve()
-
     def get_log_path(self) -> Path:
         """Get log file path"""
         log_path = self.get("logging.file", "~/.ami-server/logs/cloud-backend.log")

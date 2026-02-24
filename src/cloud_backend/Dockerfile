@@ -1,35 +1,41 @@
-# Ami Cloud Backend - Docker Image
-# Server-side AI analysis and data storage
+# Ami Cloud Backend - Multi-stage Docker Image
+# Memory-as-a-Service + Auth proxy (no local database)
 
-FROM python:3.11-slim
+# ===== Stage 1: Dependencies =====
+FROM python:3.12-slim AS deps
 
-# Set working directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
-COPY requirements.txt /app/
+COPY pyproject.toml /app/
+RUN pip install --no-cache-dir ".[all]"
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# ===== Stage 2: Runtime =====
+FROM python:3.12-slim
 
-# Copy the entire project (needed for imports from src/)
+WORKDIR /app
+
+# Copy installed packages from deps stage
+COPY --from=deps /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=deps /usr/local/bin /usr/local/bin
+
+# Copy project source
 COPY . /app/
 
-# Set Python path to include project root
+# Python path: project root for imports like `from src.common.memory...`
 ENV PYTHONPATH=/app
 
-# Expose port
+# Non-root user
+RUN groupadd -r ami && useradd -r -g ami -d /app ami && \
+    mkdir -p /app/data && chown -R ami:ami /app
+USER ami
+
 EXPOSE 9000
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:9000/health')" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:9000/health')" || exit 1
 
-# Run the application
-CMD ["uvicorn", "src.cloud_backend.main:app", "--host", "0.0.0.0", "--port", "9000"]
+# Run from cloud_backend directory (imports: from core.config_service, from api.auth, etc.)
+CMD ["python", "-m", "uvicorn", "src.cloud_backend.main:app", "--host", "0.0.0.0", "--port", "9000"]
