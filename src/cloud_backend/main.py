@@ -148,7 +148,15 @@ async def get_user_llm_api_key(
     user_id: str = Depends(get_current_user_id),
 ) -> str:
     """FastAPI dependency: get per-user sub2api API key from sub2api."""
-    api_key = await sub2api_client.get_first_api_key(int(user_id))
+    try:
+        api_key = await sub2api_client.get_first_api_key(int(user_id))
+    except Exception as e:
+        logger.error(f"Failed to get API key for user {user_id}: {e}")
+        raise AppError(
+            ErrorCode.SERVICE_SUB2API_FAILED,
+            "Failed to retrieve API key from gateway",
+            status_code=502,
+        )
     if api_key:
         return api_key
     raise AppError(
@@ -526,8 +534,9 @@ async def register(request: Request, data: RegisterRequest):
     token_data = {
         "sub": str(sub2api_user_id),
         "username": data.username,
-        "s2a": sub2api_access_token,
     }
+    if sub2api_access_token:
+        token_data["s2a"] = sub2api_access_token
     access_token = auth_service.create_access_token(token_data)
     refresh_token = auth_service.create_refresh_token(token_data)
 
@@ -961,9 +970,9 @@ async def admin_system_health(
 
     # Get user counts from sub2api
     try:
-        from services.sub2api_client import _extract_total
+        from services.sub2api_client import _extract_items, _extract_total
         result = await sub2api_client.list_users(1, 1)
-        users_total = _extract_total(result, [])
+        users_total = _extract_total(result, _extract_items(result))
         # Active count not directly available from sub2api list, use total as approximation
         users_active = users_total
     except Exception as e:

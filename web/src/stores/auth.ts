@@ -64,8 +64,19 @@ export const useAuthStore = defineStore('auth', () => {
       plan.value = data.plan || 'free'
       role.value = data.role || 'user'
       status.value = data.status || 'active'
-    } catch {
-      // Profile fetch failed, tokens may be invalid
+    } catch (err) {
+      console.warn('Profile fetch failed, retrying once...', err)
+      // Single retry after short delay (e.g., token was just issued)
+      try {
+        await new Promise(r => setTimeout(r, 1000))
+        const { data } = await authApi.getMe()
+        email.value = data.email
+        plan.value = data.plan || 'free'
+        role.value = data.role || 'user'
+        status.value = data.status || 'active'
+      } catch {
+        // Still failed — leave defaults, user can refresh page
+      }
     }
   }
 
