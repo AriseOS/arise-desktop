@@ -3,12 +3,12 @@
 
 # App Version Control
 app:
-  minimum_version: "0.3.0"  # Minimum required client app version (force upgrade if below)
+  minimum_version: "0.4.0"  # Minimum required client app version (force upgrade if below)
 
 # Server Configuration
 server:
   host: 127.0.0.1  # Only listen on localhost (Caddy will handle external access)
-  port: 9000
+  port: 9090
   debug: false
   reload: false  # Set to true for development
 
