@@ -8,7 +8,7 @@ app:
 # Server Configuration
 server:
   host: 127.0.0.1  # Only listen on localhost (Caddy will handle external access)
-  port: 9090
+  port: 9000
   debug: false
   reload: false  # Set to true for development
 
@@ -30,6 +30,9 @@ llm:
   default_provider: anthropic  # Options: anthropic, openai
 
   # Proxy/relay URL (required) - sub2api gateway base URL (no path suffix)
+  # Change per environment:
+  #   Development: http://localhost:8080
+  #   Production: https://api.yourdomain.com (or internal sub2api address)
   proxy_url: "http://localhost:8080"
 
   # Anthropic Configuration

@@ -1,21 +1,21 @@
 # =============================================================================
-# Ami Production Stack - All services in one compose
+# Ami Cloud Backend Stack
 # =============================================================================
 #
 # Services:
 #   - cloud-backend: Ami Memory-as-a-Service + Auth proxy (FastAPI)
 #   - surrealdb: Memory graph storage (SurrealDB v2)
-#   - sub2api: User management + LLM API gateway
-#   - postgres: User database (shared by sub2api)
-#   - redis: Cache + rate limiting (shared by sub2api)
-#   - caddy: Reverse proxy + auto HTTPS
 #   - surrealdb-backup: Daily SurrealDB backup
+#
+# Prerequisites:
+#   - Sub2API deployed separately (with its own postgres, redis, caddy)
+#   - Embedding API key from third-party provider (e.g., SiliconFlow)
 #
 # Quick Start:
 #   1. cp .env.example .env && nano .env
-#   2. docker compose up -d
-#   3. Check: docker compose logs -f cloud-backend
-#   4. Access: https://${DOMAIN}
+#   2. Edit cloud-backend.yaml: set llm.proxy_url to your sub2api address
+#   3. docker compose up -d
+#   4. Check: docker compose logs -f cloud-backend
 #
 # =============================================================================
 
@@ -29,8 +29,8 @@ services:
       dockerfile: src/cloud_backend/Dockerfile
     container_name: ami-cloud-backend
     restart: unless-stopped
-    expose:
-      - "9000"
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:9000:9000"
     environment:
       # JWT
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
@@ -39,21 +39,15 @@ services:
       - RERANK_API_KEY=${RERANK_API_KEY:-}
       # Sub2API connection
       - SUB2API_ADMIN_API_KEY=${SUB2API_ADMIN_API_KEY:?SUB2API_ADMIN_API_KEY is required}
-      # SurrealDB connection (overrides config yaml)
+      # SurrealDB connection (internal network, overrides yaml)
       - SURREALDB_URL=ws://surrealdb:8000/rpc
       - SURREALDB_USER=${SURREALDB_USER:-root}
       - SURREALDB_PASSWORD=${SURREALDB_PASSWORD:?SURREALDB_PASSWORD is required}
       - SURREALDB_NAMESPACE=ami
       # Timezone
       - TZ=${TZ:-Asia/Shanghai}
-    volumes:
-      - cloud_backend_data:/app/data
-      # Optional: mount custom config
-      # - ./cloud-backend.yaml:/app/src/cloud_backend/config/cloud-backend.yaml:ro
     depends_on:
       surrealdb:
-        condition: service_healthy
-      sub2api:
         condition: service_healthy
     networks:
       - ami-network
@@ -87,157 +81,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-
-  # ===========================================================================
-  # Sub2API (User Management + LLM API Gateway)
-  # ===========================================================================
-  sub2api:
-    image: weishaw/sub2api:latest
-    container_name: ami-sub2api
-    restart: unless-stopped
-    ulimits:
-      nofile:
-        soft: 100000
-        hard: 100000
-    expose:
-      - "8080"
-    volumes:
-      - sub2api_data:/app/data
-    environment:
-      - AUTO_SETUP=true
-      - SERVER_HOST=0.0.0.0
-      - SERVER_PORT=8080
-      - SERVER_MODE=${SERVER_MODE:-release}
-      - RUN_MODE=${RUN_MODE:-standard}
-      # PostgreSQL
-      - DATABASE_HOST=postgres
-      - DATABASE_PORT=5432
-      - DATABASE_USER=${POSTGRES_USER:-sub2api}
-      - DATABASE_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      - DATABASE_DBNAME=${POSTGRES_DB:-sub2api}
-      - DATABASE_SSLMODE=disable
-      # Redis
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-      - REDIS_DB=${REDIS_DB:-0}
-      # Admin
-      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@sub2api.local}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
-      # JWT (sub2api's own JWT, separate from Cloud Backend's)
-      - JWT_SECRET=${SUB2API_JWT_SECRET:-}
-      - JWT_EXPIRE_HOUR=${SUB2API_JWT_EXPIRE_HOUR:-24}
-      # TOTP
-      - TOTP_ENCRYPTION_KEY=${TOTP_ENCRYPTION_KEY:-}
-      # Security
-      - SECURITY_URL_ALLOWLIST_ENABLED=false
-      - SECURITY_URL_ALLOWLIST_ALLOW_INSECURE_HTTP=true
-      - SECURITY_URL_ALLOWLIST_ALLOW_PRIVATE_HOSTS=true
-      # Dashboard
-      - DASHBOARD_AGGREGATION_ENABLED=true
-      - DASHBOARD_AGGREGATION_INTERVAL_SECONDS=60
-      # Timezone
-      - TZ=${TZ:-Asia/Shanghai}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - ami-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-
-  # ===========================================================================
-  # PostgreSQL (User Database, managed by sub2api)
-  # ===========================================================================
-  postgres:
-    image: postgres:18-alpine
-    container_name: ami-postgres
-    restart: unless-stopped
-    ulimits:
-      nofile:
-        soft: 100000
-        hard: 100000
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    environment:
-      - POSTGRES_USER=${POSTGRES_USER:-sub2api}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      - POSTGRES_DB=${POSTGRES_DB:-sub2api}
-      - PGDATA=/var/lib/postgresql/data
-      - TZ=${TZ:-Asia/Shanghai}
-    networks:
-      - ami-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sub2api} -d ${POSTGRES_DB:-sub2api}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-  # ===========================================================================
-  # Redis (Cache + Rate Limiting)
-  # ===========================================================================
-  redis:
-    image: redis:8-alpine
-    container_name: ami-redis
-    restart: unless-stopped
-    ulimits:
-      nofile:
-        soft: 100000
-        hard: 100000
-    volumes:
-      - redis_data:/data
-    command: >
-      sh -c '
-        redis-server
-        --save 60 1
-        --appendonly yes
-        --appendfsync everysec
-        ${REDIS_PASSWORD:+--requirepass "$REDIS_PASSWORD"}'
-    environment:
-      - TZ=${TZ:-Asia/Shanghai}
-      - REDISCLI_AUTH=${REDIS_PASSWORD:-}
-    networks:
-      - ami-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
-
-  # ===========================================================================
-  # Caddy (Reverse Proxy + Auto HTTPS)
-  # ===========================================================================
-  caddy:
-    image: caddy:2-alpine
-    container_name: ami-caddy
-    restart: unless-stopped
-    ports:
-      - "${BIND_HOST:-0.0.0.0}:80:80"
-      - "${BIND_HOST:-0.0.0.0}:443:443"
-      - "${BIND_HOST:-0.0.0.0}:443:443/udp"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-      - caddy_logs:/var/log/caddy
-      # Mount web frontend dist (built separately or via CI)
-      # - ./web-dist:/srv/web/dist:ro
-    environment:
-      - DOMAIN=${DOMAIN:-localhost}
-      - TZ=${TZ:-Asia/Shanghai}
-    depends_on:
-      cloud-backend:
-        condition: service_healthy
-    networks:
-      - ami-network
 
   # ===========================================================================
   # SurrealDB Backup (Daily export)
@@ -286,23 +129,9 @@ services:
 # Volumes
 # =============================================================================
 volumes:
-  cloud_backend_data:
-    driver: local
   surrealdb_data:
     driver: local
   surrealdb_backups:
-    driver: local
-  sub2api_data:
-    driver: local
-  postgres_data:
-    driver: local
-  redis_data:
-    driver: local
-  caddy_data:
-    driver: local
-  caddy_config:
-    driver: local
-  caddy_logs:
     driver: local
 
 # =============================================================================
