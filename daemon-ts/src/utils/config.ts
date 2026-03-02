@@ -268,6 +268,18 @@ export function getConfiguredModel(): Model<"anthropic-messages"> {
   const credBaseUrl = getAnthropicBaseUrl();
   const hasOwnCredentials = !!userApiKey && !!(credBaseUrl);
 
+  // Claude Code identity headers to prevent upstream rate limiting
+  const claudeCodeHeaders = {
+    "user-agent": "claude-cli/2.1.22 (external, cli)",
+    "x-stainless-lang": "js",
+    "x-stainless-package-version": "0.70.0",
+    "x-stainless-os": "Linux",
+    "x-stainless-arch": "arm64",
+    "x-stainless-runtime": "node",
+    "x-stainless-runtime-version": "v24.13.0",
+    "x-app": "cli",
+  };
+
   if (hasOwnCredentials) {
     // Local mode: user's own API key + endpoint
     return {
@@ -281,6 +293,7 @@ export function getConfiguredModel(): Model<"anthropic-messages"> {
       cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
       contextWindow: 200000,
       maxTokens: 64000,
+      headers: claudeCodeHeaders,
     };
   }
 
@@ -297,6 +310,7 @@ export function getConfiguredModel(): Model<"anthropic-messages"> {
       cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
       contextWindow: 200000,
       maxTokens: 64000,
+      headers: claudeCodeHeaders,
     };
   }
 
