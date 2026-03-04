@@ -31,6 +31,7 @@ const activeSessions = new Map<string, OrchestratorSession>();
  */
 export async function executeTaskPipeline(
   state: TaskState,
+  initialMessage?: string,
 ): Promise<void> {
   const { taskId, task, emitter } = state;
 
@@ -75,7 +76,7 @@ export async function executeTaskPipeline(
 
   try {
     // Run the orchestrator loop
-    const execResult = await session.run(task);
+    const execResult = await session.run(initialMessage ?? task);
 
     // Check if task actually succeeded (all subtasks may have failed)
     if (execResult && execResult.failed > 0 && execResult.completed === 0) {

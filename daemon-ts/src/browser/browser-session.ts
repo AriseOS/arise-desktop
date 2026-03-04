@@ -12,10 +12,13 @@
  */
 
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
-import { BrowserConfig } from "./config.js";
-import { PageSnapshot } from "./page-snapshot.js";
-import { ActionExecutor } from "./action-executor.js";
+import { BrowserConfig, PageSnapshot, ActionExecutor } from "amipilot";
+import type { ActionResult, TabInfo, SessionRef } from "amipilot";
 import { createLogger } from "../utils/logging.js";
+
+// Electron pool page markers (daemon-specific, not in amipilot)
+const POOL_MARKER_URL = "about:blank?ami=pool";
+const CLAIMED_MARKER_URL = "about:blank?ami=claimed";
 
 const logger = createLogger("browser-session");
 
@@ -63,7 +66,7 @@ function nextTabId(): string {
 
 // ===== BrowserSession =====
 
-export class BrowserSession {
+export class BrowserSession implements SessionRef {
   // Singleton registry
   private static _instances = new Map<string, BrowserSession>();
   private static _daemonSession: BrowserSession | null = null;
@@ -71,7 +74,6 @@ export class BrowserSession {
   // Connection
   private _browser: Browser | null = null;
   private _context: BrowserContext | null = null;
-  private _playwright: Awaited<ReturnType<typeof chromium["connectOverCDP"]>> | null = null;
 
   // Pages
   private _pages = new Map<string, Page>();
@@ -121,6 +123,10 @@ export class BrowserSession {
 
   get currentTabId(): string | null {
     return this._currentTabId;
+  }
+
+  get pages(): ReadonlyMap<string, Page> {
+    return this._pages;
   }
 
   /** Return the Electron WebContentsView ID for the active page ("0"-"7" or null). */
@@ -210,8 +216,8 @@ export class BrowserSession {
             // 1. Other sessions won't re-claim it (no "ami=pool" in URL)
             // 2. Frontend tab bar won't show it as active (filters "ami=claimed")
             const claimedUrl = viewId
-              ? `${BrowserConfig.claimedMarkerUrl}&viewId=${viewId}`
-              : BrowserConfig.claimedMarkerUrl;
+              ? `${CLAIMED_MARKER_URL}&viewId=${viewId}`
+              : CLAIMED_MARKER_URL;
             await page.goto(claimedUrl);
             return page;
           }
@@ -323,8 +329,8 @@ export class BrowserSession {
         // Restore pool marker URL with viewId so it can be reclaimed
         const viewId = this._pageToViewId.get(page);
         const poolUrl = viewId !== undefined
-          ? `${BrowserConfig.poolMarkerUrl}&viewId=${viewId}`
-          : BrowserConfig.poolMarkerUrl;
+          ? `${POOL_MARKER_URL}&viewId=${viewId}`
+          : POOL_MARKER_URL;
         await page.goto(poolUrl);
       }
       this._pageToViewId.delete(page);
@@ -387,9 +393,13 @@ export class BrowserSession {
     return this.snapshot.getFullResult(options);
   }
 
+  getLastElements(): Record<string, unknown> {
+    return this.snapshot?.getLastElements() ?? {};
+  }
+
   // ===== Action Execution =====
 
-  async execAction(action: Record<string, unknown>): Promise<Record<string, unknown>> {
+  async execAction(action: Record<string, unknown>): Promise<ActionResult> {
     if (!this.executor) {
       return { success: false, message: "No executor available", details: {} };
     }
@@ -398,8 +408,8 @@ export class BrowserSession {
 
   // ===== Tab Management =====
 
-  async getTabInfo(): Promise<Record<string, unknown>[]> {
-    const tabs: Record<string, unknown>[] = [];
+  async getTabInfo(): Promise<TabInfo[]> {
+    const tabs: TabInfo[] = [];
     for (const [tabId, page] of this._pages) {
       try {
         tabs.push({
@@ -683,8 +693,8 @@ export class BrowserSession {
         if (!page.isClosed()) {
           const viewId = this._pageToViewId.get(page);
           const poolUrl = viewId !== undefined
-            ? `${BrowserConfig.poolMarkerUrl}&viewId=${viewId}`
-            : BrowserConfig.poolMarkerUrl;
+            ? `${POOL_MARKER_URL}&viewId=${viewId}`
+            : POOL_MARKER_URL;
           await page.goto(poolUrl);
         }
       } catch {

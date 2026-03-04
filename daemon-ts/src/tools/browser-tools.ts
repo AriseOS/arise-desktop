@@ -9,7 +9,7 @@
  *
  * Each tool:
  * 1. Gets browser session
- * 2. Executes action via ActionExecutor
+ * 2. Executes action via BrowserSession.execAction()
  * 3. Waits for stability
  * 4. Returns snapshot + page context + tab info
  * 5. Sends screenshot SSE event
@@ -18,8 +18,7 @@
 import { Type, type Static } from "@sinclair/typebox";
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { BrowserSession } from "../browser/browser-session.js";
-import { BrowserConfig } from "../browser/config.js";
-import { ActionExecutor } from "../browser/action-executor.js";
+import { BrowserConfig } from "amipilot";
 import type { SSEEmitter } from "../events/emitter.js";
 import { createLogger } from "../utils/logging.js";
 
@@ -163,11 +162,21 @@ async function formatTabInfo(session: BrowserSession): Promise<string> {
 
 // ===== Tool definitions =====
 
-// Shared details type for tool results
-type ToolDetails = undefined;
+// Structured details attached to tool results (preserved in messages, never sent to LLM)
+interface ToolDetails {
+  ref?: string;
+  element_name?: string;
+  element_role?: string;
+}
 
-function textResult(text: string): AgentToolResult<ToolDetails> {
-  return { content: [{ type: "text", text }], details: undefined };
+function getElementInfo(session: BrowserSession, ref: string): ToolDetails {
+  const elements = session.getLastElements();
+  const el = elements[ref] as { name?: string; role?: string } | undefined;
+  return { ref, element_name: el?.name || undefined, element_role: el?.role || undefined };
+}
+
+function toolResult(text: string, details?: ToolDetails): AgentToolResult<ToolDetails | undefined> {
+  return { content: [{ type: "text", text }], details: details ?? undefined };
 }
 
 // ----- browser_visit_page -----
@@ -187,7 +196,7 @@ function createVisitPageTool(sessionId: string, emitter?: SSEEmitter): AgentTool
       const session = await getSession(sessionId);
       await session.visit(params.url);
       const result = await buildActionResult(session, `Navigated to ${params.url}`, { emitter });
-      return textResult(result);
+      return toolResult(result);
     },
   };
 }
@@ -206,12 +215,13 @@ function createClickTool(sessionId: string, emitter?: SSEEmitter): AgentTool<typ
     parameters: clickSchema,
     execute: async (_id, params) => {
       const session = await getSession(sessionId);
+      const elementInfo = getElementInfo(session, params.ref);
       const actionResult = await session.execAction({ type: "click", ref: params.ref });
 
       if (actionResult.success) {
-        const details = actionResult.details as Record<string, unknown>;
-        const newTabCreated = details.new_tab_created as boolean;
-        const newTabId = details.new_tab_index;
+        const actionDetails = actionResult.details as Record<string, unknown>;
+        const newTabCreated = actionDetails.new_tab_created as boolean;
+        const newTabId = actionDetails.new_tab_index;
         const clickInfo = newTabCreated && newTabId
           ? `Clicked, opened new tab (now on tab ${newTabId})`
           : "Clicked successfully";
@@ -220,10 +230,10 @@ function createClickTool(sessionId: string, emitter?: SSEEmitter): AgentTool<typ
           forceRefresh: newTabCreated,
           emitter,
         });
-        return textResult(result);
+        return toolResult(result, elementInfo);
       } else {
         const result = await buildActionResult(session, `Click failed: ${actionResult.message}`, { emitter });
-        return textResult(result);
+        return toolResult(result, elementInfo);
       }
     },
   };
@@ -244,14 +254,15 @@ function createTypeTool(sessionId: string, emitter?: SSEEmitter): AgentTool<type
     parameters: typeSchema,
     execute: async (_id, params) => {
       const session = await getSession(sessionId);
+      const elementInfo = getElementInfo(session, params.ref);
       const actionResult = await session.execAction({ type: "type", text: params.text, ref: params.ref });
 
       if (actionResult.success) {
         const result = await buildActionResult(session, "Typed text successfully", { emitter });
-        return textResult(result);
+        return toolResult(result, elementInfo);
       } else {
         const result = await buildActionResult(session, `Type failed: ${actionResult.message}`, { emitter });
-        return textResult(result);
+        return toolResult(result, elementInfo);
       }
     },
   };
@@ -273,10 +284,10 @@ function createEnterTool(sessionId: string, emitter?: SSEEmitter): AgentTool<typ
 
       if (actionResult.success) {
         const result = await buildActionResult(session, "Pressed Enter successfully", { emitter });
-        return textResult(result);
+        return toolResult(result);
       } else {
         const result = await buildActionResult(session, `Enter failed: ${actionResult.message}`, { emitter });
-        return textResult(result);
+        return toolResult(result);
       }
     },
   };
@@ -296,7 +307,7 @@ function createBackTool(sessionId: string, emitter?: SSEEmitter): AgentTool<type
       const session = await getSession(sessionId);
       await session.execAction({ type: "back" });
       const result = await buildActionResult(session, "Navigated back", { emitter });
-      return textResult(result);
+      return toolResult(result);
     },
   };
 }
@@ -315,7 +326,7 @@ function createForwardTool(sessionId: string, emitter?: SSEEmitter): AgentTool<t
       const session = await getSession(sessionId);
       await session.execAction({ type: "forward" });
       const result = await buildActionResult(session, "Navigated forward", { emitter });
-      return textResult(result);
+      return toolResult(result);
     },
   };
 }
@@ -342,7 +353,7 @@ function createScrollTool(sessionId: string, emitter?: SSEEmitter): AgentTool<ty
       const amount = params.amount || 300;
       await session.execAction({ type: "scroll", direction, amount });
       const result = await buildActionResult(session, `Scrolled ${direction} by ${amount}px`, { emitter });
-      return textResult(result);
+      return toolResult(result);
     },
   };
 }
@@ -363,14 +374,15 @@ function createSelectTool(sessionId: string, emitter?: SSEEmitter): AgentTool<ty
     parameters: selectSchema,
     execute: async (_id, params) => {
       const session = await getSession(sessionId);
+      const elementInfo = getElementInfo(session, params.ref);
       const actionResult = await session.execAction({ type: "select", ref: params.ref, value: params.value });
 
       if (actionResult.success) {
         const result = await buildActionResult(session, `Selected '${params.value}' successfully`, { emitter });
-        return textResult(result);
+        return toolResult(result, elementInfo);
       } else {
         const result = await buildActionResult(session, `Select failed: ${actionResult.message}`, { emitter });
-        return textResult(result);
+        return toolResult(result, elementInfo);
       }
     },
   };
@@ -399,10 +411,10 @@ function createPressKeyTool(sessionId: string, emitter?: SSEEmitter): AgentTool<
       if (actionResult.success) {
         const keyCombo = params.keys.join("+");
         const result = await buildActionResult(session, `Pressed keys: ${keyCombo}`, { emitter });
-        return textResult(result);
+        return toolResult(result);
       } else {
         const result = await buildActionResult(session, `Press key failed: ${actionResult.message}`, { emitter });
-        return textResult(result);
+        return toolResult(result);
       }
     },
   };
@@ -441,10 +453,10 @@ function createMouseControlTool(sessionId: string, emitter?: SSEEmitter): AgentT
           `Mouse ${params.control || "click"} at coordinates (${params.x}, ${params.y})`,
           { emitter },
         );
-        return textResult(result);
+        return toolResult(result);
       } else {
         const result = await buildActionResult(session, `Mouse control failed: ${actionResult.message}`, { emitter });
-        return textResult(result);
+        return toolResult(result);
       }
     },
   };
@@ -470,7 +482,7 @@ function createGetPageSnapshotTool(sessionId: string, emitter?: SSEEmitter): Age
       const session = await getSession(sessionId);
       const page = session.currentPage;
       if (!page || page.isClosed()) {
-        return textResult("Error: No active page available");
+        return toolResult("Error: No active page available");
       }
 
       const url = page.url();
@@ -481,10 +493,10 @@ function createGetPageSnapshotTool(sessionId: string, emitter?: SSEEmitter): Age
 
       if (!params.include_links) {
         snapshot = snapshot.replace(/ -> https?:\/\/\S+/g, "");
-        return textResult(SNAPSHOT_URL_TIP + header + snapshot);
+        return toolResult(SNAPSHOT_URL_TIP + header + snapshot);
       }
 
-      return textResult(header + snapshot);
+      return toolResult(header + snapshot);
     },
   };
 }
@@ -503,7 +515,7 @@ function createGetTabInfoTool(sessionId: string): AgentTool<typeof getTabInfoSch
     execute: async (_id, _params) => {
       const session = await getSession(sessionId);
       const result = await formatTabInfo(session);
-      return textResult(result);
+      return toolResult(result);
     },
   };
 }
@@ -525,7 +537,7 @@ function createSwitchTabTool(sessionId: string, emitter?: SSEEmitter): AgentTool
       const session = await getSession(sessionId);
       const success = await session.switchToTab(params.tab_id);
       if (!success) {
-        return textResult(`Error: Failed to switch to tab '${params.tab_id}'. Use browser_get_tab_info to see available tabs.`);
+        return toolResult(`Error: Failed to switch to tab '${params.tab_id}'. Use browser_get_tab_info to see available tabs.`);
       }
 
       const pageCtx = await getPageContext(session);
@@ -538,7 +550,7 @@ function createSwitchTabTool(sessionId: string, emitter?: SSEEmitter): AgentTool
       if (snap) parts.push(snap);
 
       await sendScreenshotEvent(session, emitter);
-      return textResult(parts.join("\n\n"));
+      return toolResult(parts.join("\n\n"));
     },
   };
 }
@@ -577,7 +589,7 @@ function createNewTabTool(sessionId: string, emitter?: SSEEmitter): AgentTool<ty
       if (snap) parts.push(snap);
 
       await sendScreenshotEvent(session, emitter);
-      return textResult(parts.join("\n\n"));
+      return toolResult(parts.join("\n\n"));
     },
   };
 }
@@ -599,7 +611,7 @@ function createCloseTabTool(sessionId: string, emitter?: SSEEmitter): AgentTool<
       const session = await getSession(sessionId);
       const success = await session.closeTab(params.tab_id);
       if (!success) {
-        return textResult(`Error: Failed to close tab '${params.tab_id}'. Use browser_get_tab_info to see available tabs.`);
+        return toolResult(`Error: Failed to close tab '${params.tab_id}'. Use browser_get_tab_info to see available tabs.`);
       }
 
       const pageCtx = await getPageContext(session);
@@ -612,7 +624,7 @@ function createCloseTabTool(sessionId: string, emitter?: SSEEmitter): AgentTool<
       if (snap) parts.push(snap ?? "No active tab remaining.");
 
       await sendScreenshotEvent(session, emitter);
-      return textResult(parts.join("\n\n"));
+      return toolResult(parts.join("\n\n"));
     },
   };
 }

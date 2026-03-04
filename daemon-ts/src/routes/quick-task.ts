@@ -22,7 +22,7 @@ import { TaskStatus } from "../services/task-state.js";
 import { sseAction, sseHeartbeat } from "../events/emitter.js";
 import { Action, TERMINAL_ACTIONS } from "../events/types.js";
 import { createLogger } from "../utils/logging.js";
-import { executeTaskPipeline, cancelTask, pauseTask, resumeTask } from "../services/quick-task-service.js";
+import { executeTaskPipeline, cancelTask, pauseTask, resumeTask, getActiveSession } from "../services/quick-task-service.js";
 import { getTaskWorkspacePath, cleanupTaskWorkspace } from "../utils/workspace-manager.js";
 
 const logger = createLogger("quick-task");
@@ -141,18 +141,70 @@ quickTaskRouter.get("/stream/:taskId", async (req: Request, res: Response) => {
   }
 });
 
+// ===== Conversation Continuation Helper =====
+
+/**
+ * Continue a completed/GC'd task as a new task.
+ * Copies conversation history if the old state still exists,
+ * builds a context-enriched prompt, and starts a fresh pipeline.
+ */
+function continueAsNewTask(
+  oldTaskId: string,
+  message: string,
+  oldState: import("../services/task-state.js").TaskState | undefined,
+  res: Response,
+): void {
+  const newTaskId = uuid().slice(0, 8);
+  const newState = taskRegistry.create(newTaskId, message);
+
+  // Copy conversation history from old task (if not GC'd)
+  if (oldState) {
+    for (const entry of oldState.conversationHistory) {
+      newState.addConversation(entry.role, entry.content);
+    }
+  }
+  newState.addConversation("user", message);
+
+  // Build context-enriched initial message
+  const recentContext = oldState?.getRecentContext(15);
+  const enhancedMessage = recentContext
+    ? `[Continuing conversation from task ${oldTaskId}]\n\nPrevious context:\n${recentContext}\n\nNew user message: ${message}`
+    : message;
+
+  logger.info(
+    { oldTaskId, newTaskId, hasHistory: !!oldState, message: message.slice(0, 100) },
+    "Continuing conversation as new task",
+  );
+
+  // Start new pipeline in background
+  executeTaskPipeline(newState, enhancedMessage).catch((err) => {
+    logger.error({ taskId: newTaskId, err }, "Continuation task failed");
+  });
+
+  res.json({
+    success: true,
+    type: "continued",
+    new_task_id: newTaskId,
+    message: "Conversation continued as new task",
+  });
+}
+
 // ===== POST /message/:taskId =====
 
 quickTaskRouter.post("/message/:taskId", (req: Request, res: Response) => {
   const { taskId } = req.params;
   const state = taskRegistry.get(taskId);
+  const { type, response, message } = req.body;
 
+  // Task state gone (GC'd) — only user_message can recover via continuation
   if (!state) {
-    res.status(404).json({ error: `Task ${taskId} not found` });
+    if (type === "user_message" && message) {
+      continueAsNewTask(taskId, message, undefined, res);
+    } else {
+      res.status(404).json({ error: `Task ${taskId} not found` });
+    }
     return;
   }
-
-  const { type, response, message } = req.body;
 
   if (type === "human_response" && response) {
     // Response to ask_human
@@ -163,14 +215,31 @@ quickTaskRouter.post("/message/:taskId", (req: Request, res: Response) => {
       message: delivered ? "Response delivered" : "No pending question",
     });
   } else if (type === "user_message" && message) {
-    // Multi-turn user message
-    state.addConversation("user", message);
-    state.putUserMessage(message);
-    res.json({
-      success: true,
-      type: "queued",
-      message: "Message queued",
-    });
+    // Check if the session is still alive
+    const activeSession = getActiveSession(taskId);
+
+    if (activeSession) {
+      // Session alive — queue as normal multi-turn message
+      state.addConversation("user", message);
+      state.putUserMessage(message);
+      res.json({
+        success: true,
+        type: "queued",
+        message: "Message queued",
+      });
+    } else if (
+      state.status === TaskStatus.COMPLETED ||
+      state.status === TaskStatus.FAILED ||
+      state.status === TaskStatus.CANCELLED
+    ) {
+      // Session dead + terminal status — continue as new task
+      continueAsNewTask(taskId, message, state, res);
+    } else {
+      // Session not found but task isn't terminal (shouldn't happen normally)
+      res.status(409).json({
+        error: `Task ${taskId} is ${state.status} but has no active session`,
+      });
+    }
   } else {
     res.status(400).json({
       error: "type must be 'human_response' or 'user_message'",

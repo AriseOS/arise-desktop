@@ -121,6 +121,7 @@ export interface ToolUseRecord {
   resultSummary: string;
   judgment: string;
   currentUrl: string;
+  currentPageTitle: string;
 }
 
 // ===== Subtask Execution Data =====

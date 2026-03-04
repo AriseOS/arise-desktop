@@ -243,38 +243,7 @@ export class MemoryToolkit {
 
   // ===== Framework Methods (not LLM-exposed) =====
 
-  async queryTask(task: string): Promise<QueryResult> {
-    logger.info({ task: task.slice(0, 100) }, "Querying task memory");
-
-    this.emitter?.emit({
-      action: Action.memory_query,
-      task_id: this.taskId,
-      query: task,
-      top_k: 5,
-    });
-
-    try {
-      const data = (await getCloudClient().memoryQuery(
-        { target: task, as_type: "task", top_k: 5 },
-      )) as QueryResult;
-
-      this.emitter?.emit({
-        action: Action.memory_result,
-        task_id: this.taskId,
-        paths_count: data.cognitive_phrase ? 1 : 0,
-        paths: data.cognitive_phrase
-          ? [data.cognitive_phrase as unknown as Record<string, unknown>]
-          : [],
-        has_workflow: !!data.cognitive_phrase || !!data.states?.length,
-        method: "task_query",
-      });
-
-      return data;
-    } catch (err) {
-      logger.error({ err }, "Task memory query failed");
-      return { success: false, error: String(err) };
-    }
-  }
+  // queryTask is deprecated — use planTask instead (query(task) returns 410)
 
   async queryNavigation(
     startState: string,

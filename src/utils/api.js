@@ -894,28 +894,7 @@ export const api = {
     });
   },
 
-  /**
-   * Query workflow memory using semantic search
-   *
-   * The system automatically analyzes the query and returns the most relevant
-   * workflow data: States, Actions, CognitivePhrase, and execution plan.
-   *
-   * @param {string} query - Natural language query describing the task
-   * @param {object} options - Query options
-   * @param {number} options.topK - Number of results to return (default: 5)
-   * @param {string} options.asType - Query type: 'task' | 'navigation' | 'action' (default: 'task')
-   * @returns {Promise<object>} Response with states[], actions[], cognitive_phrase, metadata
-   */
-  async queryMemory(query, { topK = 5, asType = 'task' } = {}) {
-    return await this.callAppBackend('/api/v1/memory/query', {
-      method: 'POST',
-      body: JSON.stringify({
-        target: query,
-        as_type: asType,
-        top_k: topK,
-      })
-    });
-  },
+  // queryMemory(task) deprecated — use /memory/plan via daemon instead
 
   /**
    * Get user's workflow memory statistics

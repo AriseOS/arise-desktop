@@ -46,34 +46,9 @@ function MemoryPage({ session, showStatus, isLocalMode, onNavigateToLogin }) {
     }
   };
 
+  // Semantic search disabled — query(task) deprecated, use /memory/plan via daemon instead
   const handleSearch = async () => {
-    if (!query.trim()) {
-      showStatus('Please enter a search query', 'warning');
-      return;
-    }
-
-    setSearching(true);
-    setQueryResult(null);
-
-    try {
-      const data = await api.queryMemory(query);
-
-      setQueryResult(data);
-
-      const stateCount = data.states?.length || 0;
-      const level = data.metadata?.memory_level || 'L3';
-
-      if (stateCount === 0) {
-        showStatus('No matching memory found', 'info');
-      } else {
-        showStatus(`Found ${stateCount} state(s), memory level: ${level}`, 'success');
-      }
-    } catch (error) {
-      console.error('Memory query failed:', error);
-      showStatus(`Query failed: ${error.message}`, 'error');
-    } finally {
-      setSearching(false);
-    }
+    showStatus('Task query is deprecated. Use the agent planning flow instead.', 'info');
   };
 
   const handleClearMemory = async () => {

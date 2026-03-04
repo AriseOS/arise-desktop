@@ -33,8 +33,8 @@ const SKIP_TOOLS = new Set([
 // Keys must match actual tool names from browser-tools.ts
 const INPUT_KEEP_FIELDS: Record<string, string[]> = {
   browser_visit_page: ["url"],
-  browser_click: ["coordinate", "element_description"],
-  browser_type: ["coordinate", "text", "element_description"],
+  browser_click: ["ref", "element_description"],
+  browser_type: ["ref", "text", "element_description"],
   browser_scroll: ["coordinate", "direction"],
   browser_select: ["coordinate", "value"],
   browser_enter: [],
@@ -134,6 +134,7 @@ export class ExecutionDataCollector {
           result_summary: r.resultSummary,
           judgment: r.judgment,
           current_url: r.currentUrl,
+          current_page_title: r.currentPageTitle,
         })),
       })),
       completed_count: data.completedCount,
@@ -187,7 +188,7 @@ export class ExecutionDataCollector {
     // Second pass: collect toolResult messages (separate messages in pi-agent-core)
     const toolResults = new Map<
       string,
-      { content: string; isError: boolean }
+      { content: string; isError: boolean; details?: any }
     >();
 
     for (const msg of messages) {
@@ -209,6 +210,7 @@ export class ExecutionDataCollector {
       toolResults.set(toolCallId, {
         content: String(resultContent),
         isError,
+        details: msg.details,
       });
     }
 
@@ -249,18 +251,28 @@ export class ExecutionDataCollector {
 
     // Build ToolUseRecords
     for (const tu of toolUses) {
-      const inputSummary = ExecutionDataCollector.compressToolInput(
-        tu.name,
-        tu.input,
-      );
       const resultInfo = toolResults.get(tu.id);
       const resultContent = resultInfo?.content ?? "";
       const isError = resultInfo?.isError ?? false;
       const currentUrl =
         ExecutionDataCollector.extractCurrentUrl(resultContent);
+      const currentPageTitle =
+        ExecutionDataCollector.extractPageTitle(resultContent);
       const resultSummary = resultContent.slice(0, 300);
       const judgment = (judgments.get(tu.id) ?? "").slice(0, 500);
       const thinking = tu.thinking.slice(0, 500);
+
+      // Enrich click/type/select inputs with element name from structured details
+      let enrichedInput = tu.input;
+      const details = resultInfo?.details;
+      if (details?.element_name && typeof tu.input === "object" && tu.input !== null) {
+        enrichedInput = { ...tu.input, element_description: details.element_name };
+      }
+
+      const inputSummary = ExecutionDataCollector.compressToolInput(
+        tu.name,
+        enrichedInput,
+      );
 
       records.push({
         thinking,
@@ -270,6 +282,7 @@ export class ExecutionDataCollector {
         resultSummary,
         judgment,
         currentUrl,
+        currentPageTitle,
       });
     }
 
@@ -306,6 +319,12 @@ export class ExecutionDataCollector {
     if (!toolResultText) return "";
     const match = toolResultText.match(/URL:\*?\*?\s*(https?:\/\/\S+)/);
     return match ? match[1] : "";
+  }
+
+  static extractPageTitle(toolResultText: string): string {
+    if (!toolResultText) return "";
+    const match = toolResultText.match(/\*\*Current Page:\*\*\s*(.+)/);
+    return match ? match[1].trim() : "";
   }
 
   // ===== Conversation Trace Generation =====
@@ -447,9 +466,13 @@ export class ExecutionDataCollector {
 
         const url = record.currentUrl || "";
 
+        const pageTitle = record.currentPageTitle || "";
+
         // Insert navigate step when URL changes (but not for navigate actions themselves)
         if (url && url !== lastUrl && action !== "navigate") {
-          steps.push({ url, action: "navigate" });
+          const navStep: TraceStep = { url, action: "navigate" };
+          if (pageTitle) navStep.page_title = pageTitle;
+          steps.push(navStep);
         }
 
         const step: TraceStep = { url, action };
@@ -482,6 +505,7 @@ export class ExecutionDataCollector {
         }
 
         // Include rich execution fields from ToolUseRecord
+        if (pageTitle) step.page_title = pageTitle;
         if (record.thinking) step.thinking = record.thinking;
         if (!record.success) step.success = false;
         if (record.resultSummary) step.result_summary = record.resultSummary;
@@ -516,6 +540,7 @@ export interface TraceStep {
   action: string;
   target?: string;
   value?: string;
+  page_title?: string;
   // Rich execution fields (optional, for LearnerAgent task outcome judgment)
   thinking?: string;
   success?: boolean;
