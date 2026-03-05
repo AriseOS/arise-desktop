@@ -23,8 +23,8 @@ import {
   getDefaultPromptVars,
   type AgentType,
 } from "../prompts/unified-agent.js";
-import { AMITaskPlanner } from "./task-planner.js";
-import { AMITaskExecutor } from "./task-executor.js";
+import { AriseTaskPlanner } from "./task-planner.js";
+import { AriseTaskExecutor } from "./task-executor.js";
 import {
   type AriseSubtask,
   type ExecutorHandle,
@@ -948,7 +948,7 @@ export class OrchestratorSession {
       );
     } else {
       // Normal path: plan from scratch
-      const planner = new AMITaskPlanner({
+      const planner = new AriseTaskPlanner({
         taskId: this.taskId,
         emitter: this.emitter,
         apiKey: this.apiKey,
@@ -1058,7 +1058,7 @@ export class OrchestratorSession {
     }
 
     // Phase 3: Execute
-    const executor = new AMITaskExecutor({
+    const executor = new AriseTaskExecutor({
       taskId: this.taskId,
       emitter: this.emitter,
       apiKey: this.apiKey,

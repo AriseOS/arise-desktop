@@ -4,7 +4,7 @@
  * Ported from terminal_toolkit.py.
  *
  * Leverages the same spawn pattern as pi-coding-agent's bash tool
- * but adds AMI-specific safety features (dangerous command blocking,
+ * but adds Arise-specific safety features (dangerous command blocking,
  * output size limits, SSE terminal events).
  */
 

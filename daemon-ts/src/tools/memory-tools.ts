@@ -1,5 +1,5 @@
 /**
- * Memory Tools — Query AMI's Workflow Memory (V2).
+ * Memory Tools — Query Arise's Workflow Memory (V2).
  *
  * Ported from memory_toolkit.py.
  *
@@ -312,7 +312,7 @@ export class MemoryToolkit {
       name: "query_page_operations",
       label: "Query Page Operations",
       description:
-        "Query available operations for the current page from AMI's memory. Returns known actions, navigation paths, and behavioral patterns for the given URL.",
+        "Query available operations for the current page from Arise's memory. Returns known actions, navigation paths, and behavioral patterns for the given URL.",
       parameters: queryPageOpsSchema,
       execute: async (_id, params) => {
         const { url } = params;

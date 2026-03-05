@@ -13,7 +13,7 @@ export enum SubtaskState {
   FAILED = "FAILED",
 }
 
-// ===== AMI Subtask =====
+// ===== Arise Subtask =====
 
 export interface AriseSubtask {
   /** Sequential ID (e.g., "1", "2", "3") */

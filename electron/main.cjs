@@ -154,9 +154,9 @@ function registerIpcHandlers() {
     try {
       // Security: restrict file reads to the user's .arise directory
       const resolved = path.resolve(filePath);
-      const amiDir = path.join(os.homedir(), '.arise');
-      if (!resolved.startsWith(amiDir + path.sep) && resolved !== amiDir) {
-        return { success: false, error: `Access denied: file reads restricted to ${amiDir}` };
+      const ariseDir = path.join(os.homedir(), '.arise');
+      if (!resolved.startsWith(ariseDir + path.sep) && resolved !== ariseDir) {
+        return { success: false, error: `Access denied: file reads restricted to ${ariseDir}` };
       }
       if (!fs.existsSync(resolved)) {
         return { success: false, error: `File does not exist: ${filePath}` };

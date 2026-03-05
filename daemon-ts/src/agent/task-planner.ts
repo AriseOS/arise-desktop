@@ -1,5 +1,5 @@
 /**
- * AMI Task Planner — Memory-First task decomposition.
+ * Arise Task Planner — Memory-First task decomposition.
  *
  * Ported from ami_task_planner.py.
  *
@@ -32,9 +32,9 @@ import {
 
 const logger = createLogger("task-planner");
 
-// ===== AMITaskPlanner =====
+// ===== AriseTaskPlanner =====
 
-export class AMITaskPlanner {
+export class AriseTaskPlanner {
   private taskId: string;
   private emitter?: SSEEmitter;
   private apiKey?: string;
@@ -56,7 +56,7 @@ export class AMITaskPlanner {
 
     logger.info(
       { taskId: this.taskId },
-      "AMITaskPlanner initialized",
+      "AriseTaskPlanner initialized",
     );
   }
 
@@ -87,7 +87,7 @@ export class AMITaskPlanner {
 
       const planResult = await memoryToolkit.planTask(task);
       const memoryPlan = planResult.memory_plan;
-      memoryContext = AMITaskPlanner.formatMemoryPlanForDecompose(memoryPlan);
+      memoryContext = AriseTaskPlanner.formatMemoryPlanForDecompose(memoryPlan);
 
       logger.info(
         {
@@ -118,7 +118,7 @@ export class AMITaskPlanner {
       });
 
       // Emit human-readable memory report as agent_report
-      const memoryReport = AMITaskPlanner.buildMemoryReport(memoryPlan, level);
+      const memoryReport = AriseTaskPlanner.buildMemoryReport(memoryPlan, level);
       this.emitter?.emitAgentReport(memoryReport, "info");
     } catch (err) {
       const isTimeout = err instanceof Error && err.message.includes("timed out");
@@ -287,10 +287,10 @@ export class AMITaskPlanner {
         agentType = typeMatch[1].toLowerCase().trim();
         if (!["browser", "document", "code", "multi_modal"].includes(agentType)) {
           logger.warn({ agentType }, "Unknown agent type, inferring from content");
-          agentType = AMITaskPlanner.inferAgentType(content);
+          agentType = AriseTaskPlanner.inferAgentType(content);
         }
       } else {
-        agentType = AMITaskPlanner.inferAgentType(content);
+        agentType = AriseTaskPlanner.inferAgentType(content);
       }
 
       // Extract depends_on
@@ -315,7 +315,7 @@ export class AMITaskPlanner {
       while ((simpleMatch = simplePattern.exec(tasksContent)) !== null) {
         simpleIndex++;
         const content = simpleMatch[1].trim();
-        const agentType = AMITaskPlanner.inferAgentType(content);
+        const agentType = AriseTaskPlanner.inferAgentType(content);
         subtasks.push(
           createSubtask({
             id: String(simpleIndex),

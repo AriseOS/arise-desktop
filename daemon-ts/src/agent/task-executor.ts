@@ -1,5 +1,5 @@
 /**
- * AMI Task Executor — Parallel batch execution with dependency resolution.
+ * Arise Task Executor — Parallel batch execution with dependency resolution.
  *
  * Ported from ami_task_executor.py.
  *
@@ -74,9 +74,9 @@ class Semaphore {
   }
 }
 
-// ===== AMITaskExecutor =====
+// ===== AriseTaskExecutor =====
 
-export class AMITaskExecutor implements TaskExecutorLike {
+export class AriseTaskExecutor implements TaskExecutorLike {
   readonly taskId: string;
   readonly executorId: string;
   readonly taskLabel: string;
@@ -147,7 +147,7 @@ export class AMITaskExecutor implements TaskExecutorLike {
         executorId: this.executorId,
         agentTypes: [...this.agentTools.keys()],
       },
-      "AMITaskExecutor initialized",
+      "AriseTaskExecutor initialized",
     );
   }
 

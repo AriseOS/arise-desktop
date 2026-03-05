@@ -29,7 +29,7 @@ function getNowStr(): string {
 }
 
 const ORCHESTRATOR_TEMPLATE = `\
-You are AMI, a coordinator in a multi-agent system.
+You are Arise, a coordinator in a multi-agent system.
 
 ## Your Role
 You are the first point of contact for user requests. You can:

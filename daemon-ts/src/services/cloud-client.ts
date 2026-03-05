@@ -1,5 +1,5 @@
 /**
- * Cloud Client — HTTP client for AMI cloud backend API.
+ * Cloud Client — HTTP client for Arise cloud backend API.
  *
  * Ported from CloudClient in Python daemon.
  *
