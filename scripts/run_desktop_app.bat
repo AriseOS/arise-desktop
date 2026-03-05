@@ -16,9 +16,9 @@ IF "%USE_LOCAL_CLOUD%"=="true" (
 )
 
 REM Logging + daemon health check configuration
-set "AMI_LOG_DIR=%USERPROFILE%\.arise\logs"
-if not exist "%AMI_LOG_DIR%" mkdir "%AMI_LOG_DIR%" >nul 2>&1
-set "DAEMON_BOOT_LOG=%AMI_LOG_DIR%\daemon-boot.log"
+set "ARISE_LOG_DIR=%USERPROFILE%\.arise\logs"
+if not exist "%ARISE_LOG_DIR%" mkdir "%ARISE_LOG_DIR%" >nul 2>&1
+set "DAEMON_BOOT_LOG=%ARISE_LOG_DIR%\daemon-boot.log"
 set "DAEMON_HOST=127.0.0.1"
 set "DAEMON_DEFAULT_PORT=8765"
 set "DAEMON_HEALTH_PATH=/api/v1/health"

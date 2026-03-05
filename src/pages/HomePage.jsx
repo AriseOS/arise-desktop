@@ -40,7 +40,7 @@ function formatDateDivider(date) {
  * HomePage - Main dashboard with chat-style interface
  *
  * Features:
- * - Welcome card with Ami branding
+ * - Welcome card with Arise branding
  * - Chat history area with real-time agent reports
  * - Bottom input area with text/voice/record actions
  * - Optional recording sandbox panel
@@ -499,7 +499,7 @@ function HomePage({ session, onNavigate, showStatus, version, initialMessage }) 
   // Render instructions box (shown when no messages)
   const renderInstructions = () => (
     <div className="instructions-box">
-      <h3 className="instructions-title">How can Ami help you?</h3>
+      <h3 className="instructions-title">How can Arise help you?</h3>
 
       <div className="instruction-item">
         <div className="instruction-icon">
@@ -507,7 +507,7 @@ function HomePage({ session, onNavigate, showStatus, version, initialMessage }) 
         </div>
         <div className="instruction-text">
           <div className="instruction-action">Describe your task</div>
-          <div className="instruction-desc">Tell Ami what you want to automate in natural language</div>
+          <div className="instruction-desc">Tell Arise what you want to automate in natural language</div>
         </div>
       </div>
 
@@ -517,7 +517,7 @@ function HomePage({ session, onNavigate, showStatus, version, initialMessage }) 
         </div>
         <div className="instruction-text">
           <div className="instruction-action">Record your actions</div>
-          <div className="instruction-desc">Show Ami how to do it by recording your workflow</div>
+          <div className="instruction-desc">Show Arise how to do it by recording your workflow</div>
         </div>
       </div>
 
@@ -590,7 +590,7 @@ function HomePage({ session, onNavigate, showStatus, version, initialMessage }) 
     return (
       <div key={message.id || index} className={`message agent ${isAgent ? `report-${reportType}` : ''}`}>
         <div className="sender-name-line">
-          <span className="sender-name">Ami</span>
+          <span className="sender-name">Arise</span>
           {subtaskTag && <span className="subtask-badge">{subtaskTag}</span>}
         </div>
         <div className="message-row">
@@ -699,7 +699,7 @@ function HomePage({ session, onNavigate, showStatus, version, initialMessage }) 
     <div className="home-page-v2">
       {/* Header */}
       <div className="home-header">
-        <h1 className="home-title">Ami</h1>
+        <h1 className="home-title">Arise</h1>
         <div className="header-actions">
           {renderTaskStatus()}
           <button
@@ -721,7 +721,7 @@ function HomePage({ session, onNavigate, showStatus, version, initialMessage }) 
             </div>
             <div className="welcome-text">
               <h2>Hi{session?.username ? `, ${session.username}` : ''}!</h2>
-              <p>I'm Ami, your automation assistant</p>
+              <p>I'm Arise, your automation assistant</p>
             </div>
           </div>
         </div>

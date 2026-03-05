@@ -18,7 +18,7 @@ import {
   DECOMPOSE_SYSTEM_MESSAGE,
 } from "../prompts/task-decomposition.js";
 import {
-  type AMISubtask,
+  type AriseSubtask,
   createSubtask,
 } from "./schemas.js";
 import { Action } from "../events/types.js";
@@ -62,7 +62,7 @@ export class AMITaskPlanner {
 
   // ===== Main Entry Point =====
 
-  async decomposeAndQueryMemory(task: string): Promise<AMISubtask[]> {
+  async decomposeAndQueryMemory(task: string): Promise<AriseSubtask[]> {
     logger.info(
       { task: task.slice(0, 100) },
       "Memory-First decomposing task",
@@ -144,7 +144,7 @@ export class AMITaskPlanner {
   async fineGrainedDecompose(
     task: string,
     memoryContext = "",
-  ): Promise<AMISubtask[]> {
+  ): Promise<AriseSubtask[]> {
     logger.info("Fine-grained decomposing task...");
 
     // Emit progress
@@ -250,8 +250,8 @@ export class AMITaskPlanner {
 
   // ===== XML Parsing =====
 
-  parseXmlSubtasks(responseText: string): AMISubtask[] {
-    const subtasks: AMISubtask[] = [];
+  parseXmlSubtasks(responseText: string): AriseSubtask[] {
+    const subtasks: AriseSubtask[] = [];
 
     // Extract <tasks>...</tasks> block
     const tasksMatch = responseText.match(/<tasks>([\s\S]*?)<\/tasks>/i);
@@ -337,7 +337,7 @@ export class AMITaskPlanner {
 
   // ===== JSON Fallback =====
 
-  private parseCoarseSubtasks(responseText: string): AMISubtask[] {
+  private parseCoarseSubtasks(responseText: string): AriseSubtask[] {
     // Try to extract JSON from the response
     const jsonMatch = responseText.match(/\{[\s\S]*"subtasks"[\s\S]*\}/);
     if (!jsonMatch) {
@@ -529,7 +529,7 @@ export class AMITaskPlanner {
       .join("\n");
   }
 
-  private emitDecomposeResult(subtasks: AMISubtask[]): void {
+  private emitDecomposeResult(subtasks: AriseSubtask[]): void {
     if (!this.emitter) return;
 
     const subtasksData = subtasks.map((st) => ({

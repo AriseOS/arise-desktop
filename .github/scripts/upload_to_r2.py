@@ -119,11 +119,11 @@ def upload_to_r2(
     content_type = get_content_type(filename)
 
     # Object keys
-    # 1. Versioned: releases/v1.0.0/macos-arm64/Ami-1.0.0-macos-arm64.dmg
+    # 1. Versioned: releases/v1.0.0/macos-arm64/Arise-1.0.0-macos-arm64.dmg
     versioned_key = f"releases/v{version}/{platform_arch}/{filename}"
 
-    # 2. Latest: releases/latest/macos-arm64/Ami-latest-macos-arm64.dmg
-    latest_filename = f"Ami-latest-{platform_arch}{file_path_obj.suffix}"
+    # 2. Latest: releases/latest/macos-arm64/Arise-latest-macos-arm64.dmg
+    latest_filename = f"Arise-latest-{platform_arch}{file_path_obj.suffix}"
     latest_key = f"releases/latest/{platform_arch}/{latest_filename}"
 
     try:
@@ -259,7 +259,7 @@ def main():
 Examples:
   # Upload macOS ARM64 build (signed and notarized)
   python upload_to_r2.py \\
-    --file dist/Ami-1.0.0-macos-arm64.dmg \\
+    --file dist/Arise-1.0.0-macos-arm64.dmg \\
     --version 1.0.0 \\
     --platform macos \\
     --arch arm64 \\
@@ -268,7 +268,7 @@ Examples:
 
   # Upload Windows build (unsigned)
   python upload_to_r2.py \\
-    --file dist/Ami-1.0.0-windows-x64.zip \\
+    --file dist/Arise-1.0.0-windows-x64.zip \\
     --version 1.0.0 \\
     --platform windows \\
     --arch x64

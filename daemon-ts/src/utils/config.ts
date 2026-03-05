@@ -15,12 +15,12 @@ const logger = createLogger("config");
 
 // ===== Paths =====
 
-export const AMI_DIR = join(homedir(), ".arise");
-export const CONFIG_DIR = join(AMI_DIR, "config");
+export const ARISE_DIR = join(homedir(), ".arise");
+export const CONFIG_DIR = join(ARISE_DIR, "config");
 // Config file: daemon-ts/config/app-backend.yaml (relative to dist/)
 export const CONFIG_FILE = join(import.meta.dirname, "..", "..", "config", "app-backend.yaml");
-export const LOG_DIR = join(AMI_DIR, "logs");
-export const PORT_FILE = join(AMI_DIR, "daemon.port");
+export const LOG_DIR = join(ARISE_DIR, "logs");
+export const PORT_FILE = join(ARISE_DIR, "daemon.port");
 
 // ===== Config Interface =====
 
@@ -61,7 +61,7 @@ const DEFAULT_CONFIG: AppConfig = {
     use_proxy: false,
   },
   storage: {
-    base_path: AMI_DIR,
+    base_path: ARISE_DIR,
   },
   browser: {
     auto_start: true,
@@ -86,7 +86,7 @@ export function loadConfig(): AppConfig {
 
       // Handle "auto" for storage.base_path (Python parity)
       if (merged.storage?.base_path === "auto") {
-        merged.storage.base_path = AMI_DIR;
+        merged.storage.base_path = ARISE_DIR;
       }
 
       // Expand ${key.path} variable references (Python parity)
@@ -226,7 +226,7 @@ function applyEnvOverrides(config: AppConfig): void {
 
 // ===== Settings Overrides =====
 
-const SETTINGS_FILE = join(AMI_DIR, "settings.json");
+const SETTINGS_FILE = join(ARISE_DIR, "settings.json");
 
 /**
  * Load user settings overrides from ~/.arise/settings.json.

@@ -61,7 +61,7 @@ function AgentMessage({ message }) {
             <Icon name="bot" size={16} />
           )}
         </div>
-        <span className="message-sender">{agentConfig ? agentConfig.name : 'Ami'}</span>
+        <span className="message-sender">{agentConfig ? agentConfig.name : 'Arise'}</span>
         {(taskLabel || executorId) && (
           <span className="executor-badge" style={{
             fontSize: '11px',

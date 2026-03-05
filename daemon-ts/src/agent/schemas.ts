@@ -1,7 +1,7 @@
 /**
  * Agent Pipeline Schemas — subtask model, state enum, decomposition types.
  *
- * Ported from ami_task_executor.py (SubtaskState, AMISubtask).
+ * Ported from ami_task_executor.py (SubtaskState, AriseSubtask).
  */
 
 // ===== Subtask State Enum =====
@@ -15,7 +15,7 @@ export enum SubtaskState {
 
 // ===== AMI Subtask =====
 
-export interface AMISubtask {
+export interface AriseSubtask {
   /** Sequential ID (e.g., "1", "2", "3") */
   id: string;
   /** Task description (self-contained) */
@@ -40,7 +40,7 @@ export interface AMISubtask {
   retryCount: number;
 }
 
-/** Create a new AMISubtask with defaults */
+/** Create a new AriseSubtask with defaults */
 export function createSubtask(opts: {
   id: string;
   content: string;
@@ -48,7 +48,7 @@ export function createSubtask(opts: {
   dependsOn?: string[];
   workflowGuide?: string;
   memoryLevel?: string;
-}): AMISubtask {
+}): AriseSubtask {
   return {
     id: opts.id,
     content: opts.content,
@@ -81,7 +81,7 @@ export interface ExecutorHandle {
   promise: Promise<ExecutionResult>;
   /** Resolve/reject for the promise (for external cancellation) */
   abortController: AbortController;
-  subtasks: AMISubtask[];
+  subtasks: AriseSubtask[];
   startedAt: Date;
   workspaceFolder: string;
 }
@@ -94,7 +94,7 @@ export interface TaskExecutorLike {
   readonly isPaused: boolean;
   getCurrentAgent(): AgentLike | null;
   getRunningAgents(): Map<string, AgentLike>;
-  replanSubtasks(newSubtasks: AMISubtask[]): ReplanResult;
+  replanSubtasks(newSubtasks: AriseSubtask[]): ReplanResult;
 }
 
 /** Minimal interface for Agent (avoid circular imports) */

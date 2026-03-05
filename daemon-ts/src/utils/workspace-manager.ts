@@ -6,12 +6,12 @@
 
 import { mkdirSync, existsSync, rmSync } from "node:fs";
 import { join, resolve, relative, isAbsolute } from "node:path";
-import { AMI_DIR } from "./config.js";
+import { ARISE_DIR } from "./config.js";
 import { createLogger } from "./logging.js";
 
 const logger = createLogger("workspace");
 
-const WORKSPACE_BASE = join(AMI_DIR, "workspace");
+const WORKSPACE_BASE = join(ARISE_DIR, "workspace");
 
 /** Sanitize taskId to prevent path traversal */
 function safeTaskDir(taskId: string): string {

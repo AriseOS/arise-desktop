@@ -8,7 +8,7 @@ Param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-Write-Host "=== Ami Portable Build - Electron (Windows) ===" -ForegroundColor Green
+Write-Host "=== Arise Portable Build - Electron (Windows) ===" -ForegroundColor Green
 
 $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $ProjectRoot = Split-Path -Parent $ScriptDir
@@ -28,7 +28,7 @@ function Invoke-Step {
 
 $ElectronDist   = Join-Path $ProjectRoot 'release'
 $PortableOutDir = Join-Path $ProjectRoot 'portable'
-$PortableBinDir = Join-Path $PortableOutDir 'AmiPortable'
+$PortableBinDir = Join-Path $PortableOutDir 'ArisePortable'
 
 if (-not (Test-Path $PortableBinDir)) {
     New-Item -ItemType Directory -Path $PortableBinDir -Force | Out-Null
@@ -99,13 +99,13 @@ Invoke-Step "Step 4: Assembling portable directory..." {
 # Step 5: Create ZIP archive if not skipped
 if (-not $SkipArchive) {
     Invoke-Step "Step 5: Creating portable ZIP archive..." {
-        $zipPath = Join-Path $PortableOutDir 'AmiPortable.zip'
+        $zipPath = Join-Path $PortableOutDir 'ArisePortable.zip'
         if (Test-Path $zipPath) {
             Remove-Item $zipPath -Force
         }
 
         Set-Location $PortableOutDir
-        Compress-Archive -Path 'AmiPortable/*' -DestinationPath $zipPath
+        Compress-Archive -Path 'ArisePortable/*' -DestinationPath $zipPath
         Write-Host "Portable package archived to: $zipPath" -ForegroundColor Green
     }
 } else {
@@ -115,5 +115,5 @@ if (-not $SkipArchive) {
 Write-Host "`n=== Portable build complete ===" -ForegroundColor Green
 Write-Host "Portable directory: $PortableBinDir" -ForegroundColor Green
 if (-not $SkipArchive) {
-    Write-Host "ZIP archive:     $(Join-Path $PortableOutDir 'AmiPortable.zip')" -ForegroundColor Green
+    Write-Host "ZIP archive:     $(Join-Path $PortableOutDir 'ArisePortable.zip')" -ForegroundColor Green
 }

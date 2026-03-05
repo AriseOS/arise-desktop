@@ -14,14 +14,14 @@
 
 import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { AMI_DIR, getConfig } from "../utils/config.js";
+import { ARISE_DIR, getConfig } from "../utils/config.js";
 import { createLogger } from "../utils/logging.js";
 
 const logger = createLogger("auth-manager");
 
 // ===== Session File =====
 
-const SESSION_FILE = join(AMI_DIR, "session.json");
+const SESSION_FILE = join(ARISE_DIR, "session.json");
 
 interface StoredSession {
   access_token: string;

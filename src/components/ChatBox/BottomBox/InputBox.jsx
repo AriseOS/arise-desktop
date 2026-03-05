@@ -48,7 +48,7 @@ function InputBox({
   files = [],
   onFilesChange,
   onAddFile,
-  placeholder = 'Ask Ami to automate your tasks',
+  placeholder = 'Ask Arise to automate your tasks',
   disabled = false,
   allowDragDrop = true,
   className = '',

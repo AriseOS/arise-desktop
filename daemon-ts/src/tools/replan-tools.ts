@@ -10,7 +10,7 @@
 
 import { Type, type Static } from "@sinclair/typebox";
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
-import { SubtaskState, createSubtask, type AMISubtask } from "../agent/schemas.js";
+import { SubtaskState, createSubtask, type AriseSubtask } from "../agent/schemas.js";
 import { createLogger } from "../utils/logging.js";
 
 const logger = createLogger("replan-tools");
@@ -19,9 +19,9 @@ const logger = createLogger("replan-tools");
 
 /** Minimal interface for the executor (avoid circular import) */
 interface ExecutorRef {
-  readonly subtasks: AMISubtask[];
+  readonly subtasks: AriseSubtask[];
   addSubtasksAsync(
-    newSubtasks: AMISubtask[],
+    newSubtasks: AriseSubtask[],
     afterSubtaskId?: string,
   ): Promise<string[]>;
 }
@@ -168,7 +168,7 @@ function createSplitAndHandoffTool(
       }
 
       // Build new subtasks
-      const newSubtasks: AMISubtask[] = [];
+      const newSubtasks: AriseSubtask[] = [];
       for (let i = 0; i < taskList.length; i++) {
         const item = taskList[i];
         if (!item.content) {

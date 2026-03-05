@@ -23,8 +23,8 @@ export const integrationsRouter = Router();
 
 // ===== Storage =====
 
-const AMI_DIR = join(homedir(), ".arise");
-const INTEGRATIONS_FILE = join(AMI_DIR, "integrations.json");
+const ARISE_DIR = join(homedir(), ".arise");
+const INTEGRATIONS_FILE = join(ARISE_DIR, "integrations.json");
 
 const AVAILABLE_INTEGRATIONS = ["gmail", "google_drive", "google_calendar", "notion"];
 
@@ -45,7 +45,7 @@ function loadIntegrations(): IntegrationData {
 }
 
 function saveIntegrations(data: IntegrationData): void {
-  mkdirSync(AMI_DIR, { recursive: true });
+  mkdirSync(ARISE_DIR, { recursive: true });
   writeFileSync(INTEGRATIONS_FILE, JSON.stringify(data, null, 2), "utf-8");
 }
 

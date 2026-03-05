@@ -13,7 +13,7 @@
 import { Router, type Request, type Response } from "express";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { getConfig, AMI_DIR } from "../utils/config.js";
+import { getConfig, ARISE_DIR } from "../utils/config.js";
 import { storeSession, clearSession, getSession, getAuthToken, updateSessionTokens } from "../services/auth-manager.js";
 import { createLogger } from "../utils/logging.js";
 
@@ -21,7 +21,7 @@ const logger = createLogger("auth-routes");
 
 export const authRouter = Router();
 
-const SETTINGS_FILE = join(AMI_DIR, "settings.json");
+const SETTINGS_FILE = join(ARISE_DIR, "settings.json");
 
 // ===== Helper: fetch LLM credentials and save to settings.json =====
 
@@ -58,7 +58,7 @@ async function fetchAndStoreLLMCredentials(accessToken: string): Promise<void> {
     creds.anthropic = { api_key };
     settings.credentials = creds;
 
-    mkdirSync(AMI_DIR, { recursive: true });
+    mkdirSync(ARISE_DIR, { recursive: true });
     writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), "utf-8");
     logger.info("LLM credentials stored in settings.json");
   } catch (err) {

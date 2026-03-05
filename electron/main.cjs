@@ -152,7 +152,7 @@ function registerIpcHandlers() {
   // --- File operations ---
   ipcMain.handle('read-file', (_event, filePath, encoding = 'utf-8') => {
     try {
-      // Security: restrict file reads to the user's .ami directory
+      // Security: restrict file reads to the user's .arise directory
       const resolved = path.resolve(filePath);
       const amiDir = path.join(os.homedir(), '.arise');
       if (!resolved.startsWith(amiDir + path.sep) && resolved !== amiDir) {

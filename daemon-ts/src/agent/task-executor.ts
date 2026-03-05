@@ -20,7 +20,7 @@ import { Agent } from "@mariozechner/pi-agent-core";
 import { getConfiguredModel, getAnthropicApiKey } from "../utils/config.js";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import {
-  type AMISubtask,
+  type AriseSubtask,
   SubtaskState,
   type ExecutionResult,
   type ReplanResult,
@@ -94,8 +94,8 @@ export class AMITaskExecutor implements TaskExecutorLike {
   private childAgentToolsFactory?: (agentType: string, sessionId: string, workingDirOverride?: string) => AgentTool<any>[];
 
   // Subtask management
-  private _subtasks: AMISubtask[] = [];
-  private subtaskMap: Map<string, AMISubtask> = new Map();
+  private _subtasks: AriseSubtask[] = [];
+  private subtaskMap: Map<string, AriseSubtask> = new Map();
 
   // Pause/resume
   private _paused = false;
@@ -157,7 +157,7 @@ export class AMITaskExecutor implements TaskExecutorLike {
     return this._paused;
   }
 
-  get subtasks(): AMISubtask[] {
+  get subtasks(): AriseSubtask[] {
     return this._subtasks;
   }
 
@@ -171,7 +171,7 @@ export class AMITaskExecutor implements TaskExecutorLike {
     return this._runningAgents as Map<string, AgentLike>;
   }
 
-  setSubtasks(subtasks: AMISubtask[]): void {
+  setSubtasks(subtasks: AriseSubtask[]): void {
     this._subtasks = subtasks;
     this.subtaskMap = new Map(subtasks.map((s) => [s.id, s]));
     logger.info({ count: subtasks.length }, "Subtasks set");
@@ -330,14 +330,14 @@ export class AMITaskExecutor implements TaskExecutorLike {
   // ===== Batch Parallel Dispatch =====
 
   private async executeBatch(
-    subtasks: AMISubtask[],
+    subtasks: AriseSubtask[],
     collector: ExecutionDataCollector,
     semaphore: Semaphore,
   ): Promise<{ completed: number; failed: number }> {
     let completed = 0;
     let failed = 0;
 
-    const runOne = async (subtask: AMISubtask): Promise<void> => {
+    const runOne = async (subtask: AriseSubtask): Promise<void> => {
       await semaphore.acquire();
       try {
         const success = await this.executeSubtask(subtask, collector);
@@ -366,8 +366,8 @@ export class AMITaskExecutor implements TaskExecutorLike {
 
   // ===== Dependency Resolution =====
 
-  private getAllEligibleSubtasks(): AMISubtask[] {
-    const eligible: AMISubtask[] = [];
+  private getAllEligibleSubtasks(): AriseSubtask[] {
+    const eligible: AriseSubtask[] = [];
 
     for (const subtask of this._subtasks) {
       if (subtask.state !== SubtaskState.PENDING) continue;
@@ -439,7 +439,7 @@ export class AMITaskExecutor implements TaskExecutorLike {
   }
 
   private async executeSubtask(
-    subtask: AMISubtask,
+    subtask: AriseSubtask,
     collector: ExecutionDataCollector,
   ): Promise<boolean> {
     // Resolve tools: for parallel browser subtasks, borrow a reusable sessionId
@@ -638,7 +638,7 @@ export class AMITaskExecutor implements TaskExecutorLike {
   // ===== Prompt Building =====
 
   private buildPrompt(
-    subtask: AMISubtask,
+    subtask: AriseSubtask,
     browserContext?: string,
   ): string {
     const parts: string[] = [];
@@ -792,7 +792,7 @@ No historical workflow guide available. Please explore and complete the task usi
 
   // ===== Replan Support =====
 
-  replanSubtasks(newSubtasks: AMISubtask[]): ReplanResult {
+  replanSubtasks(newSubtasks: AriseSubtask[]): ReplanResult {
     // Remove all PENDING subtasks
     const kept = this._subtasks.filter(
       (s) => s.state !== SubtaskState.PENDING,
@@ -847,7 +847,7 @@ No historical workflow guide available. Please explore and complete the task usi
   // ===== Dynamic Subtask Addition =====
 
   async addSubtasksAsync(
-    newSubtasks: AMISubtask[],
+    newSubtasks: AriseSubtask[],
     afterSubtaskId?: string,
   ): Promise<string[]> {
     let insertIdx = this._subtasks.length;
@@ -938,7 +938,7 @@ No historical workflow guide available. Please explore and complete the task usi
 
   // ===== SSE Helpers =====
 
-  private getSubtaskProgress(subtask: AMISubtask): string {
+  private getSubtaskProgress(subtask: AriseSubtask): string {
     const total = this._subtasks.length;
     const index = this._subtasks.indexOf(subtask) + 1;
     return `[${index}/${total}]`;
@@ -958,7 +958,7 @@ No historical workflow guide available. Please explore and complete the task usi
     return "";
   }
 
-  private emitSubtaskState(subtask: AMISubtask): void {
+  private emitSubtaskState(subtask: AriseSubtask): void {
     // Persist to disk (fire-and-forget)
     try {
       persistSubtaskState(
@@ -1007,7 +1007,7 @@ No historical workflow guide available. Please explore and complete the task usi
     }
   }
 
-  private emitSubtaskRunning(subtask: AMISubtask): void {
+  private emitSubtaskRunning(subtask: AriseSubtask): void {
     // Emit agent_report for subtask starting (matches Python _emit_subtask_running)
     if (this.emitter) {
       const progress = this.getSubtaskProgress(subtask);

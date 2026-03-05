@@ -114,19 +114,19 @@ jobs:
             --password "${{ secrets.NOTARIZE_APP_PWD }}"
 
           echo "Submitting DMG for notarization..."
-          xcrun notarytool submit dist/Ami-${{ steps.version.outputs.version }}.dmg \
+          xcrun notarytool submit dist/Arise-${{ steps.version.outputs.version }}.dmg \
             --keychain-profile "notarytool-profile" \
             --wait
 
           echo "Stapling notarization ticket..."
-          xcrun stapler staple dist/Ami-${{ steps.version.outputs.version }}.dmg
+          xcrun stapler staple dist/Arise-${{ steps.version.outputs.version }}.dmg
 
           echo "✓ Notarization complete"
 
       - name: Rename DMG
         run: |
           cd dist
-          mv Ami-${{ steps.version.outputs.version }}.dmg Ami-${{ steps.version.outputs.version }}-macos-arm64.dmg
+          mv Arise-${{ steps.version.outputs.version }}.dmg Arise-${{ steps.version.outputs.version }}-macos-arm64.dmg
           ls -lh *.dmg
 
       - name: Install boto3 for R2
@@ -151,7 +151,7 @@ jobs:
           fi
 
           python3 .github/scripts/upload_to_r2.py \
-            --file "dist/Ami-${{ steps.version.outputs.version }}-macos-arm64.dmg" \
+            --file "dist/Arise-${{ steps.version.outputs.version }}-macos-arm64.dmg" \
             --version "${{ steps.version.outputs.version }}" \
             --platform macos \
             --arch arm64 \
@@ -239,7 +239,7 @@ jobs:
         shell: bash
         run: |
           cd portable
-          mv AmiPortable.zip Ami-${{ steps.version.outputs.version }}-windows-x64.zip
+          mv ArisePortable.zip Arise-${{ steps.version.outputs.version }}-windows-x64.zip
           ls -lh *.zip
 
       - name: Install boto3 for R2
@@ -255,7 +255,7 @@ jobs:
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
           python .github/scripts/upload_to_r2.py \
-            --file "portable/Ami-${{ steps.version.outputs.version }}-windows-x64.zip" \
+            --file "portable/Arise-${{ steps.version.outputs.version }}-windows-x64.zip" \
             --version "${{ steps.version.outputs.version }}" \
             --platform windows \
             --arch x64 \
@@ -283,7 +283,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          name: Ami v${{ steps.version.outputs.version }}
+          name: Arise v${{ steps.version.outputs.version }}
           draft: false
           prerelease: false
           generate_release_notes: true
@@ -292,7 +292,7 @@ jobs:
 
             | Platform | Architecture | Download |
             |----------|--------------|----------|
-            | macOS | Apple Silicon (M1/M2/M3) | [Ami-${{ steps.version.outputs.version }}-macos-arm64.dmg](${{ secrets.R2_PUBLIC_URL }}/releases/v${{ steps.version.outputs.version }}/macos-arm64/Ami-${{ steps.version.outputs.version }}-macos-arm64.dmg) |
-            | Windows | x64 | [Ami-${{ steps.version.outputs.version }}-windows-x64.zip](${{ secrets.R2_PUBLIC_URL }}/releases/v${{ steps.version.outputs.version }}/windows-x64/Ami-${{ steps.version.outputs.version }}-windows-x64.zip) |
+            | macOS | Apple Silicon (M1/M2/M3) | [Arise-${{ steps.version.outputs.version }}-macos-arm64.dmg](${{ secrets.R2_PUBLIC_URL }}/releases/v${{ steps.version.outputs.version }}/macos-arm64/Arise-${{ steps.version.outputs.version }}-macos-arm64.dmg) |
+            | Windows | x64 | [Arise-${{ steps.version.outputs.version }}-windows-x64.zip](${{ secrets.R2_PUBLIC_URL }}/releases/v${{ steps.version.outputs.version }}/windows-x64/Arise-${{ steps.version.outputs.version }}-windows-x64.zip) |
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

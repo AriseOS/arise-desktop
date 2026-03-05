@@ -45,8 +45,8 @@ const APP_VERSION: string = JSON.parse(
   readFileSync(join(import.meta.dirname, "..", "package.json"), "utf-8"),
 ).version;
 const DAEMON_MAGIC = `arise-daemon-${APP_VERSION}`;
-const AMI_DIR = join(homedir(), ".arise");
-const PORT_FILE = join(AMI_DIR, "daemon.port");
+const ARISE_DIR = join(homedir(), ".arise");
+const PORT_FILE = join(ARISE_DIR, "daemon.port");
 const DEFAULT_PORT = 8765;
 const MAX_PORT_TRIES = 10;
 const BROWSER_CDP_PORT = process.env.BROWSER_CDP_PORT;
@@ -132,7 +132,7 @@ app.post("/api/v1/app/diagnostic", (_req, res) => {
   // Collect recent log lines (matching Python's behavior of last 5000 lines)
   let recentLogs = "";
   try {
-    const logPath = join(AMI_DIR, "logs", "app.log");
+    const logPath = join(ARISE_DIR, "logs", "app.log");
     if (existsSync(logPath)) {
       const logContent = readFileSync(logPath, "utf-8");
       const lines = logContent.split("\n");
@@ -216,7 +216,7 @@ function tryListen(server: Server, port: number): Promise<boolean> {
 // ===== Port File Management =====
 
 function writePortFile(port: number): void {
-  mkdirSync(AMI_DIR, { recursive: true });
+  mkdirSync(ARISE_DIR, { recursive: true });
   writeFileSync(PORT_FILE, String(port), "utf-8");
   logger.info({ port, file: PORT_FILE }, "Port file written");
 }

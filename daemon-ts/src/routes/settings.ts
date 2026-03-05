@@ -23,8 +23,8 @@ export const settingsRouter = Router();
 
 // ===== Persisted Settings =====
 
-const AMI_DIR = join(homedir(), ".arise");
-const SETTINGS_FILE = join(AMI_DIR, "settings.json");
+const ARISE_DIR = join(homedir(), ".arise");
+const SETTINGS_FILE = join(ARISE_DIR, "settings.json");
 
 function loadOverrides(): Record<string, unknown> {
   try {
@@ -38,7 +38,7 @@ function loadOverrides(): Record<string, unknown> {
 }
 
 function saveOverrides(data: Record<string, unknown>): void {
-  mkdirSync(AMI_DIR, { recursive: true });
+  mkdirSync(ARISE_DIR, { recursive: true });
   writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 2), "utf-8");
 }
 

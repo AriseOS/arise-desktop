@@ -12,7 +12,7 @@
 import type { Agent } from "@mariozechner/pi-agent-core";
 import {
   SubtaskState,
-  type AMISubtask,
+  type AriseSubtask,
   type ToolUseRecord,
   type SubtaskExecutionData,
   type TaskExecutionData,
@@ -57,7 +57,7 @@ export class ExecutionDataCollector {
   /**
    * Extract and compress execution data from a completed subtask.
    */
-  collectSubtaskData(agent: Agent, subtask: AMISubtask): void {
+  collectSubtaskData(agent: Agent, subtask: AriseSubtask): void {
     const messages = agent.state.messages as any[];
     const toolRecords = this.extractToolRecords(messages);
 
@@ -92,7 +92,7 @@ export class ExecutionDataCollector {
   buildTaskData(
     taskId: string,
     userRequest: string,
-    subtasks: AMISubtask[],
+    subtasks: AriseSubtask[],
   ): TaskExecutionData {
     const completedCount = subtasks.filter(
       (s) => s.state === SubtaskState.DONE,

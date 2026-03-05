@@ -236,7 +236,7 @@ export async function executeTask(
   const startTime = Date.now();
 
   try {
-    const systemPrompt = `You are Ami, a capable AI assistant. Help the user with their task.
+    const systemPrompt = `You are Arise, a capable AI assistant. Help the user with their task.
 Respond in the user's language. Be concise and helpful.
 Current time: ${new Date().toISOString()}`;
 

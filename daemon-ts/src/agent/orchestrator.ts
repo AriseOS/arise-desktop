@@ -26,7 +26,7 @@ import {
 import { AMITaskPlanner } from "./task-planner.js";
 import { AMITaskExecutor } from "./task-executor.js";
 import {
-  type AMISubtask,
+  type AriseSubtask,
   type ExecutorHandle,
   type ExecutionResult,
   SubtaskState,
@@ -924,7 +924,7 @@ export class OrchestratorSession {
     taskLabel: string,
     resumeTaskId?: string,
   ): Promise<ExecutionResult> {
-    let subtasks: AMISubtask[];
+    let subtasks: AriseSubtask[];
 
     if (resumeTaskId) {
       // Resume path: load snapshot from disk and reconstruct subtasks
@@ -1252,11 +1252,11 @@ export class OrchestratorSession {
   // ===== Resume Support =====
 
   /**
-   * Reconstruct AMISubtask[] from persisted subtask snapshots.
+   * Reconstruct AriseSubtask[] from persisted subtask snapshots.
    * DONE subtasks are preserved as-is (executor skips them since they're not PENDING).
    * FAILED and RUNNING subtasks are reset to PENDING for re-execution.
    */
-  private buildResumeSubtasks(snapshots: import("./schemas.js").SubtaskSnapshot[]): AMISubtask[] {
+  private buildResumeSubtasks(snapshots: import("./schemas.js").SubtaskSnapshot[]): AriseSubtask[] {
     return snapshots.map((s) => {
       const st = createSubtask({
         id: s.id,

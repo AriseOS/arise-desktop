@@ -16,7 +16,7 @@ import {
 import type {
   TaskStateSnapshot,
   SubtaskSnapshot,
-  AMISubtask,
+  AriseSubtask,
 } from "../agent/schemas.js";
 import { createLogger } from "../utils/logging.js";
 
@@ -26,7 +26,7 @@ const STATE_FILE = "task-state.json";
 
 // ===== Snapshot builders =====
 
-export function subtaskToSnapshot(st: AMISubtask): SubtaskSnapshot {
+export function subtaskToSnapshot(st: AriseSubtask): SubtaskSnapshot {
   return {
     id: st.id,
     content: st.content,
@@ -43,7 +43,7 @@ export function subtaskToSnapshot(st: AMISubtask): SubtaskSnapshot {
 export function buildSnapshot(
   taskId: string,
   userRequest: string,
-  subtasks: AMISubtask[],
+  subtasks: AriseSubtask[],
   status: TaskStateSnapshot["status"],
   memoryPlan?: Record<string, unknown>,
   createdAt?: string,

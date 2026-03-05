@@ -19,7 +19,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { AMI_DIR } from "../utils/config.js";
+import { ARISE_DIR } from "../utils/config.js";
 import { createLogger } from "../utils/logging.js";
 
 const logger = createLogger("storage-manager");
@@ -53,7 +53,7 @@ export class StorageManager {
   private basePath: string;
 
   constructor(basePath?: string) {
-    this.basePath = basePath ?? AMI_DIR;
+    this.basePath = basePath ?? ARISE_DIR;
   }
 
   // ===== Path Helpers =====

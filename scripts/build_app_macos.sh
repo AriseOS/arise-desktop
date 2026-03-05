@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Unified Build Script for Ami
+# Unified Build Script for Arise
 # Builds, signs, and optionally notarizes the complete macOS application
 # TypeScript daemon + Electron + macOS code signing
 
@@ -23,7 +23,7 @@ CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-}"
 
 # Notarization settings
 SKIP_NOTARIZE="${SKIP_NOTARIZE:-true}"
-NOTARIZE_KEYCHAIN_PROFILE="${NOTARIZE_KEYCHAIN_PROFILE:-ami-notary}"
+NOTARIZE_KEYCHAIN_PROFILE="${NOTARIZE_KEYCHAIN_PROFILE:-arise-notary}"
 
 # Parse arguments
 CLEAN_BUILD=false
@@ -66,7 +66,7 @@ while [[ $# -gt 0 ]]; do
             cat <<EOF
 Usage: $0 [options]
 
-Build, sign, and package Ami for macOS
+Build, sign, and package Arise for macOS
 
 Options:
   --clean              Clean build (remove all build artifacts first)
@@ -108,7 +108,7 @@ EOF
     esac
 done
 
-echo -e "${GREEN}=== Ami macOS Build Script (Electron) ===${NC}"
+echo -e "${GREEN}=== Arise macOS Build Script (Electron) ===${NC}"
 echo ""
 
 # Fail-fast: --notarize requires CODESIGN_IDENTITY
@@ -220,20 +220,20 @@ fi
 
 echo -e "${BLUE}App bundle: ${APP_PATH}${NC}"
 
-# Step 3: Sign Ami.app
+# Step 3: Sign Arise.app
 if [ "$SHOULD_SIGN" = true ]; then
-    echo -e "${YELLOW}Step 3: Signing Ami.app...${NC}"
+    echo -e "${YELLOW}Step 3: Signing Arise.app...${NC}"
 
-    echo "  Signing Ami.app..."
+    echo "  Signing Arise.app..."
     codesign --deep --force --options runtime --timestamp \
         --entitlements "${PROJECT_ROOT}/build/entitlements.mac.plist" \
         --sign "${CODESIGN_IDENTITY}" \
         "${APP_PATH}"
 
     if [ $? -eq 0 ]; then
-        echo -e "${GREEN}    ✓ Ami.app signed${NC}"
+        echo -e "${GREEN}    ✓ Arise.app signed${NC}"
     else
-        echo -e "${RED}ERROR: Failed to sign Ami.app${NC}"
+        echo -e "${RED}ERROR: Failed to sign Arise.app${NC}"
         exit 1
     fi
 
@@ -265,7 +265,7 @@ if [ "$CREATE_DMG" = true ]; then
         mkdir -p "${DIST_DIR}"
 
         VERSION=$(grep '"version"' "${PROJECT_ROOT}/package.json" | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')
-        DMG_NAME="Ami-${VERSION}.dmg"
+        DMG_NAME="Arise-${VERSION}.dmg"
         DMG_PATH="${DIST_DIR}/${DMG_NAME}"
 
         # Create temporary staging directory
@@ -279,7 +279,7 @@ if [ "$CREATE_DMG" = true ]; then
         rm -f "${DMG_PATH}"
 
         hdiutil create \
-            -volname "Ami" \
+            -volname "Arise" \
             -srcfolder "${DMG_STAGING}" \
             -ov \
             -format UDZO \
