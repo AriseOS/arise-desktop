@@ -12,9 +12,9 @@
  */
 
 import { Agent } from "@mariozechner/pi-agent-core";
-import { basename } from "node:path";
+import { basename, join as pathJoin } from "node:path";
 import { statSync } from "node:fs";
-import { getConfiguredModel, getAnthropicApiKey, getConfig } from "../utils/config.js";
+import { getConfiguredModel, getAnthropicApiKey, getConfig, ARISE_DIR } from "../utils/config.js";
 import { Type, type Static } from "@sinclair/typebox";
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { getOrchestratorSystemPrompt } from "../prompts/orchestrator.js";
@@ -575,7 +575,7 @@ export class OrchestratorSession {
     this.emitter = opts.emitter;
     this.apiKey = opts.apiKey;
     this.workspaceDir =
-      opts.workspaceDir ?? process.env.HOME + "/.arise/workspace";
+      opts.workspaceDir ?? pathJoin(ARISE_DIR, "workspace");
     this.childAgentToolsFactory = opts.childAgentToolsFactory;
 
     this.ctx = {
@@ -873,7 +873,6 @@ export class OrchestratorSession {
     // Resolve workspace path:
     // - Resume: use the original task's workspace (files live there)
     // - Normal: workspaceFolder is a relative subdirectory name, join with base
-    const { join: pathJoin } = await import("node:path");
     const { mkdirSync } = await import("node:fs");
     let resolvedWorkspace: string;
     if (resumeTaskId) {
