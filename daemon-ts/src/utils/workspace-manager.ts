@@ -1,5 +1,5 @@
 /**
- * Workspace Manager — Per-task workspace directories under ~/.ami/workspace/.
+ * Workspace Manager — Per-task workspace directories under ~/.arise/workspace/.
  *
  * Ported from WorkingDirectoryManager in Python daemon.
  */

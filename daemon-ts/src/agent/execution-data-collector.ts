@@ -528,7 +528,7 @@ export class ExecutionDataCollector {
       task: data.userRequest,
       success,
       steps,
-      source: "ami-desktop",
+      source: "arise-desktop",
     };
   }
 }

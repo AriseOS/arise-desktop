@@ -1,5 +1,5 @@
 /**
- * Structured logging — writes to ~/.ami/logs/app.log
+ * Structured logging — writes to ~/.arise/logs/app.log
  */
 
 import { pino } from "pino";
@@ -7,12 +7,12 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const logDir = join(homedir(), ".ami", "logs");
+const logDir = join(homedir(), ".arise", "logs");
 mkdirSync(logDir, { recursive: true });
 
 const logFile = join(logDir, "app.log");
 
-const isDebug = !!(process.env.AMI_DEBUG || process.env.LOG_LEVEL === "debug");
+const isDebug = !!(process.env.ARISE_DEBUG || process.env.LOG_LEVEL === "debug");
 const consoleLevel = isDebug ? "debug" : "info";
 
 export const logger = pino({

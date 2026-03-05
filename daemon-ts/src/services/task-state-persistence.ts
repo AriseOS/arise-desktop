@@ -1,7 +1,7 @@
 /**
  * Task State Persistence — read/write task-state.json for resume support.
  *
- * Each task gets a snapshot at ~/.ami/workspace/{taskId}/task-state.json.
+ * Each task gets a snapshot at ~/.arise/workspace/{taskId}/task-state.json.
  * The snapshot contains the full subtask plan with states/results so a
  * restarted daemon can resume where it left off.
  */

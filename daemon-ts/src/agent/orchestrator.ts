@@ -575,7 +575,7 @@ export class OrchestratorSession {
     this.emitter = opts.emitter;
     this.apiKey = opts.apiKey;
     this.workspaceDir =
-      opts.workspaceDir ?? process.env.HOME + "/.ami/workspace";
+      opts.workspaceDir ?? process.env.HOME + "/.arise/workspace";
     this.childAgentToolsFactory = opts.childAgentToolsFactory;
 
     this.ctx = {
@@ -1369,7 +1369,7 @@ export class OrchestratorSession {
       task,
       success: true,
       steps: [],
-      source: "ami-desktop",
+      source: "arise-desktop",
       conversation: conversationTrace,
     };
 

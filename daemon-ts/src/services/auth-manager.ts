@@ -1,7 +1,7 @@
 /**
  * Auth Manager — Central JWT token management for the daemon.
  *
- * Single source of truth for auth state. Persists session to ~/.ami/session.json.
+ * Single source of truth for auth state. Persists session to ~/.arise/session.json.
  * Auto-refreshes tokens before expiry. Thread-safe via refresh mutex.
  *
  * Exports:

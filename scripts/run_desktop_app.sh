@@ -1,9 +1,9 @@
 #!/bin/bash
-# Quick start script for Ami Desktop App (Electron)
+# Quick start script for Arise Desktop App (Electron)
 
 # Parse arguments
 USE_LOCAL_CLOUD=false
-AMI_DEBUG_MODE=false
+ARISE_DEBUG_MODE=false
 for arg in "$@"; do
     case $arg in
         --local)
@@ -11,13 +11,13 @@ for arg in "$@"; do
             shift
             ;;
         --debug)
-            AMI_DEBUG_MODE=true
+            ARISE_DEBUG_MODE=true
             shift
             ;;
     esac
 done
 
-echo "🚀 Starting Ami Desktop App..."
+echo "🚀 Starting Arise Desktop App..."
 if [ "$USE_LOCAL_CLOUD" = true ]; then
     echo "   Mode: Using LOCAL Cloud Backend (http://localhost:9090)"
 else
@@ -47,12 +47,12 @@ fi
 cd "${PROJECT_ROOT}"
 
 echo "✅ Starting Electron app (Development Mode)..."
-echo "   AMI_DEV_MODE=1 → Using TypeScript daemon (tsx)"
+echo "   ARISE_DEV_MODE=1 → Using TypeScript daemon (tsx)"
 
 # Build environment variables
-ENV_VARS="AMI_DEV_MODE=1"
-if [ "$AMI_DEBUG_MODE" = true ]; then
-    ENV_VARS="$ENV_VARS AMI_DEBUG=1"
+ENV_VARS="ARISE_DEV_MODE=1"
+if [ "$ARISE_DEBUG_MODE" = true ]; then
+    ENV_VARS="$ENV_VARS ARISE_DEBUG=1"
     echo "   Debug Mode: ENABLED"
 fi
 

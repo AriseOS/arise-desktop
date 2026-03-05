@@ -138,7 +138,7 @@ function App() {
   // Check setup status on mount
   useEffect(() => {
     // Load persisted language from electron-store
-    window.electronAPI.storeGet("ami_language").then((saved) => {
+    window.electronAPI.storeGet("arise_language").then((saved) => {
       if (saved === "en" || saved === "zh") {
         setLanguage(saved);
       }
@@ -166,7 +166,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    window.electronAPI.storeSet("ami_language", language).catch((e) => {
+    window.electronAPI.storeSet("arise_language", language).catch((e) => {
       console.error("[App] Failed to save language to storage:", e);
     });
     i18n.changeLanguage(language);
@@ -285,7 +285,7 @@ function App() {
       } else {
         // Check if local mode was previously active
         try {
-          const savedLocalMode = await window.electronAPI.storeGet('ami_local_mode');
+          const savedLocalMode = await window.electronAPI.storeGet('arise_local_mode');
           if (savedLocalMode) {
             // Verify credentials still exist
             const creds = await api.getCredentials();
@@ -296,7 +296,7 @@ function App() {
               useAgentStore.getState().recoverRunningTasks();
             } else {
               // Credentials gone, clear local mode flag
-              await window.electronAPI.storeDelete('ami_local_mode');
+              await window.electronAPI.storeDelete('arise_local_mode');
             }
           } else {
             console.log('[App] User is not logged in');
@@ -323,7 +323,7 @@ function App() {
 
   const handleLocalModeStart = async () => {
     setIsLocalMode(true);
-    await window.electronAPI.storeSet('ami_local_mode', true);
+    await window.electronAPI.storeSet('arise_local_mode', true);
     console.log('[App] Entered local mode');
     // Recover any running backend tasks
     useAgentStore.getState().recoverRunningTasks();
@@ -331,7 +331,7 @@ function App() {
 
   const handleExitLocalMode = async () => {
     setIsLocalMode(false);
-    await window.electronAPI.storeDelete('ami_local_mode');
+    await window.electronAPI.storeDelete('arise_local_mode');
     console.log('[App] Exited local mode');
     navigate('login');
   };
@@ -342,7 +342,7 @@ function App() {
     setIsLocalMode(false);
     setSession(null);
     // Clear local mode flag
-    await window.electronAPI.storeDelete('ami_local_mode').catch(() => {});
+    await window.electronAPI.storeDelete('arise_local_mode').catch(() => {});
 
     // Navigate to login page
     navigate('login');
@@ -569,10 +569,10 @@ function App() {
     }
   };
 
-  // Bottom navigation bar - 4-tab design: Ami, Browser, Memories, Explore
+  // Bottom navigation bar - 4-tab design: Arise, Browser, Memories, Explore
   const renderBottomNav = () => {
     const navItems = [
-      { id: "main", icon: "robot", label: "Ami" },
+      { id: "main", icon: "robot", label: "Arise" },
       { id: "browser", icon: "globe", label: "Browser" },
       { id: "memories", icon: "brain", label: "Memories" },
       { id: "explore", icon: "compass", label: "Explore" },

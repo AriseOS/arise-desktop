@@ -18,7 +18,7 @@
 import { Type, type Static } from "@sinclair/typebox";
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { BrowserSession } from "../browser/browser-session.js";
-import { BrowserConfig } from "amipilot";
+import { BrowserConfig } from "arise-browser";
 import type { SSEEmitter } from "../events/emitter.js";
 import { createLogger } from "../utils/logging.js";
 

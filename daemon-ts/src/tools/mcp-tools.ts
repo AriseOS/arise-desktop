@@ -97,7 +97,7 @@ export class MCPClient {
     await this.sendRequest("initialize", {
       protocolVersion: "2024-11-05",
       capabilities: {},
-      clientInfo: { name: "ami-daemon", version: "1.0.0" },
+      clientInfo: { name: "arise-daemon", version: "1.0.0" },
     });
 
     // Send initialized notification

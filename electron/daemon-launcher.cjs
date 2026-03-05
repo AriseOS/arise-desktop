@@ -1,7 +1,7 @@
 /**
  * DaemonLauncher — TypeScript daemon lifecycle management.
  *
- * Dev mode (AMI_DEV_MODE=1): runs daemon-ts via tsx or compiled dist/server.js
+ * Dev mode (ARISE_DEV_MODE=1): runs daemon-ts via tsx or compiled dist/server.js
  * Production: runs bundled daemon-ts/dist/server.js from app resources
  */
 
@@ -11,7 +11,7 @@ const path = require('path');
 const os = require('os');
 const kill = require('tree-kill');
 
-const PORT_FILE = path.join(os.homedir(), '.ami', 'daemon.port');
+const PORT_FILE = path.join(os.homedir(), '.arise', 'daemon.port');
 
 class DaemonLauncher {
   constructor(cdpPort) {
@@ -94,8 +94,8 @@ class DaemonLauncher {
 
   _getDaemonPath() {
     // Dev mode: use source files directly
-    if (process.env.AMI_DEV_MODE) {
-      console.log('[DaemonLauncher] AMI_DEV_MODE set, using development daemon path');
+    if (process.env.ARISE_DEV_MODE) {
+      console.log('[DaemonLauncher] ARISE_DEV_MODE set, using development daemon path');
       return this._getTSDaemonDevPath();
     }
 

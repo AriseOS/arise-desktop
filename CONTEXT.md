@@ -1,4 +1,4 @@
-# Ami Desktop App
+# Arise Desktop App
 
 Desktop application built with Electron + TypeScript daemon.
 
@@ -6,7 +6,7 @@ Desktop application built with Electron + TypeScript daemon.
 
 - `src/` - Frontend source (React/JSX)
 - `electron/` - Electron main process (CJS)
-- `daemon-ts/` - TypeScript daemon (Express + amipilot)
+- `daemon-ts/` - TypeScript daemon (Express + arise-browser)
 - `icons/` - App icons (icns, ico, png)
 - `scripts/` - Build and run scripts
 - `docs/` - Design documents
@@ -20,20 +20,20 @@ Electron Main Process <-> React Frontend (renderer)
        |
   TypeScript Daemon (launched by DaemonLauncher)
        |
-  Agent (amipilot connects to Electron via CDP)
+  Agent (arise-browser connects to Electron via CDP)
 ```
 
 ### Browser Engine
 
-Browser automation primitives (PageSnapshot, ActionExecutor, BrowserConfig, BehaviorRecorder) come from the **amipilot** package. Daemon keeps only `browser-session.ts` — an Electron-specific BrowserSession that manages CDP pool pages and implements amipilot's `SessionRef` interface.
+Browser automation primitives (PageSnapshot, ActionExecutor, BrowserConfig, BehaviorRecorder) come from the **arise-browser** package. Daemon keeps only `browser-session.ts` — an Electron-specific BrowserSession that manages CDP pool pages and implements arise-browser's `SessionRef` interface.
 
 ```
-amipilot (npm package)
+arise-browser (npm package)
   └── PageSnapshot, ActionExecutor, BrowserConfig, BehaviorRecorder
 
 daemon-ts/src/browser/browser-session.ts (Electron-specific)
   └── CDP pool management, webview ID tracking, daemon lifecycle
-  └── implements SessionRef, uses amipilot components internally
+  └── implements SessionRef, uses arise-browser components internally
 ```
 
 ### Electron Files
@@ -52,7 +52,7 @@ daemon-ts/src/browser/browser-session.ts (Electron-specific)
 - **CDP port**: Found at startup, passed to daemon via `BROWSER_CDP_PORT` env var
 - **Shared cookies**: All WebContentsViews use `persist:user_login` partition
 - **Pool pages**: Identified by `about:blank?ami=pool` marker URL
-- **Element text via structured details**: Click/type/select tools capture element info from amipilot's cached elements map into `AgentToolResult.details` (preserved in messages, never sent to LLM). ExecutionDataCollector reads `details.element_name` for workflow learning — no regex parsing.
+- **Element text via structured details**: Click/type/select tools capture element info from arise-browser's cached elements map into `AgentToolResult.details` (preserved in messages, never sent to LLM). ExecutionDataCollector reads `details.element_name` for workflow learning — no regex parsing.
 
 ## Key Frontend Pages
 

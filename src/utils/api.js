@@ -844,10 +844,10 @@ export const api = {
    * @param {string} task - Task description for the recording
    * @param {Array} operations - Raw recording operations [{type, url, text, value, ...}]
    * @param {object} options - Options
-   * @param {string} options.source - Source identifier (default: "ami-desktop")
+   * @param {string} options.source - Source identifier (default: "arise-desktop")
    * @returns {Promise<object>} Learn result with phrase_created, phrase_ids, etc.
    */
-  async learnFromRecording(task, operations, { source = 'ami-desktop' } = {}) {
+  async learnFromRecording(task, operations, { source = 'arise-desktop' } = {}) {
     // Map recording operation types to valid trace actions
     const actionMap = {
       click: 'click',

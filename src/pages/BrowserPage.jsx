@@ -380,7 +380,7 @@ export default function BrowserPage({
           <div className="browser-mode-status">
             <span className="browser-mode-dot pulse" style={{ background: 'var(--primary-main)' }} />
             <span className="browser-mode-label" style={{ color: 'var(--primary-main)' }}>
-              Ami is browsing
+              Arise is browsing
             </span>
           </div>
         </div>

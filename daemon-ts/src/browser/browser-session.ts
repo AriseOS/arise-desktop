@@ -12,11 +12,11 @@
  */
 
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
-import { BrowserConfig, PageSnapshot, ActionExecutor } from "amipilot";
-import type { ActionResult, TabInfo, SessionRef } from "amipilot";
+import { BrowserConfig, PageSnapshot, ActionExecutor } from "arise-browser";
+import type { ActionResult, TabInfo, SessionRef } from "arise-browser";
 import { createLogger } from "../utils/logging.js";
 
-// Electron pool page markers (daemon-specific, not in amipilot)
+// Electron pool page markers (daemon-specific, not in arise-browser)
 const POOL_MARKER_URL = "about:blank?ami=pool";
 const CLAIMED_MARKER_URL = "about:blank?ami=claimed";
 

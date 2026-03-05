@@ -23,7 +23,7 @@ export const integrationsRouter = Router();
 
 // ===== Storage =====
 
-const AMI_DIR = join(homedir(), ".ami");
+const AMI_DIR = join(homedir(), ".arise");
 const INTEGRATIONS_FILE = join(AMI_DIR, "integrations.json");
 
 const AVAILABLE_INTEGRATIONS = ["gmail", "google_drive", "google_calendar", "notion"];

@@ -1,5 +1,5 @@
 /**
- * Config — Load application configuration from ~/.ami/config/app-backend.yaml.
+ * Config — Load application configuration from ~/.arise/config/app-backend.yaml.
  *
  * Ported from config_loader pattern in Python daemon.
  */
@@ -15,7 +15,7 @@ const logger = createLogger("config");
 
 // ===== Paths =====
 
-export const AMI_DIR = join(homedir(), ".ami");
+export const AMI_DIR = join(homedir(), ".arise");
 export const CONFIG_DIR = join(AMI_DIR, "config");
 // Config file: daemon-ts/config/app-backend.yaml (relative to dist/)
 export const CONFIG_FILE = join(import.meta.dirname, "..", "..", "config", "app-backend.yaml");
@@ -229,7 +229,7 @@ function applyEnvOverrides(config: AppConfig): void {
 const SETTINGS_FILE = join(AMI_DIR, "settings.json");
 
 /**
- * Load user settings overrides from ~/.ami/settings.json.
+ * Load user settings overrides from ~/.arise/settings.json.
  * These are saved by the settings route and take priority over yaml config.
  */
 function loadSettingsOverrides(): Record<string, unknown> {

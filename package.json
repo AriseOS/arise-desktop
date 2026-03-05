@@ -1,6 +1,6 @@
 {
-  "name": "ami-desktop",
-  "productName": "Ami",
+  "name": "arise-desktop",
+  "productName": "Arise",
   "private": true,
   "version": "0.6.1",
   "type": "module",
@@ -13,7 +13,7 @@
     "build:daemon": "cd daemon-ts && npm ci && npm run build",
     "build:all": "rm -rf release && npm run build:daemon && npm run build && npx electron-builder",
     "preview": "vite preview",
-    "electron:dev": "concurrently \"vite\" \"wait-on tcp:1420 && cross-env AMI_DEV_MODE=1 VITE_DEV_SERVER_URL=http://localhost:1420 electron .\"",
+    "electron:dev": "concurrently \"vite\" \"wait-on tcp:1420 && cross-env ARISE_DEV_MODE=1 VITE_DEV_SERVER_URL=http://localhost:1420 electron .\"",
     "electron:build": "vite build && electron-builder"
   },
   "dependencies": {

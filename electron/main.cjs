@@ -96,7 +96,7 @@ async function getStore() {
     // electron-store v10+ is ESM-only, use dynamic import
     storePromise = (async () => {
       const Store = (await import('electron-store')).default;
-      return new Store({ name: 'ami-settings' });
+      return new Store({ name: 'arise-settings' });
     })();
   }
   return storePromise;
@@ -107,7 +107,7 @@ async function getStore() {
 function registerIpcHandlers() {
   // --- Daemon port ---
   ipcMain.handle('get-daemon-port', () => {
-    const portFile = path.join(os.homedir(), '.ami', 'daemon.port');
+    const portFile = path.join(os.homedir(), '.arise', 'daemon.port');
     try {
       if (fs.existsSync(portFile)) {
         const content = fs.readFileSync(portFile, 'utf-8').trim();
@@ -125,7 +125,7 @@ function registerIpcHandlers() {
 
   // --- Daemon logs ---
   ipcMain.handle('read-daemon-logs', (_event, maxLines = 100) => {
-    const logPath = path.join(os.homedir(), '.ami', 'logs', 'app.log');
+    const logPath = path.join(os.homedir(), '.arise', 'logs', 'app.log');
     try {
       if (!fs.existsSync(logPath)) {
         return { success: false, error: 'Log file not found', path: logPath, logs: [] };
@@ -154,7 +154,7 @@ function registerIpcHandlers() {
     try {
       // Security: restrict file reads to the user's .ami directory
       const resolved = path.resolve(filePath);
-      const amiDir = path.join(os.homedir(), '.ami');
+      const amiDir = path.join(os.homedir(), '.arise');
       if (!resolved.startsWith(amiDir + path.sep) && resolved !== amiDir) {
         return { success: false, error: `Access denied: file reads restricted to ${amiDir}` };
       }
@@ -291,7 +291,7 @@ function registerIpcHandlers() {
 
 app.whenReady().then(async () => {
   // Set app name explicitly (electron-builder's productName only applies to packaged builds)
-  app.setName('Ami');
+  app.setName('Arise');
 
   // CDP port is determined synchronously before app.ready — no await needed.
 
@@ -301,7 +301,7 @@ app.whenReady().then(async () => {
   // Content Security Policy — restrict script/resource loading
   // In dev mode, Vite injects inline scripts (React Fast Refresh preamble) that
   // require 'unsafe-inline'. Only enforce strict CSP in production builds.
-  const isDevMode = !app.isPackaged || process.env.AMI_DEV_MODE || process.env.VITE_DEV_SERVER_URL;
+  const isDevMode = !app.isPackaged || process.env.ARISE_DEV_MODE || process.env.VITE_DEV_SERVER_URL;
   if (!isDevMode) {
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       callback({
@@ -335,7 +335,7 @@ app.whenReady().then(async () => {
     center: true,
     show: false,
     icon: iconPath,
-    title: 'Ami',
+    title: 'Arise',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -361,7 +361,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('get-daemon-start-error', () => daemonStartError);
 
   // Load frontend
-  const isDev = !app.isPackaged || process.env.AMI_DEV_MODE || process.env.VITE_DEV_SERVER_URL;
+  const isDev = !app.isPackaged || process.env.ARISE_DEV_MODE || process.env.VITE_DEV_SERVER_URL;
   if (isDev) {
     const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
     win.loadURL(devUrl);
@@ -391,8 +391,8 @@ app.whenReady().then(async () => {
     return { action: 'deny' };
   });
 
-  // DevTools: only when explicitly requested via AMI_DEBUG=1
-  if (process.env.AMI_DEBUG) {
+  // DevTools: only when explicitly requested via ARISE_DEBUG=1
+  if (process.env.ARISE_DEBUG) {
     win.webContents.openDevTools({ mode: 'detach' });
   }
 

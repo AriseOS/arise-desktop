@@ -12,7 +12,7 @@ import { createLogger } from "../utils/logging.js";
 
 const logger = createLogger("bridge");
 
-const isDebug = !!(process.env.AMI_DEBUG || process.env.LOG_LEVEL === "debug");
+const isDebug = !!(process.env.ARISE_DEBUG || process.env.LOG_LEVEL === "debug");
 
 /**
  * Safely JSON.stringify with circular reference protection.

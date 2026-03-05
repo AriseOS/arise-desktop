@@ -23,7 +23,7 @@ export const settingsRouter = Router();
 
 // ===== Persisted Settings =====
 
-const AMI_DIR = join(homedir(), ".ami");
+const AMI_DIR = join(homedir(), ".arise");
 const SETTINGS_FILE = join(AMI_DIR, "settings.json");
 
 function loadOverrides(): Record<string, unknown> {

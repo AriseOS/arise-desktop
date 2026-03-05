@@ -3,7 +3,7 @@
  *
  * - CORS (*)
  * - Port discovery (start at 8765, try up to 10)
- * - Write ~/.ami/daemon.port
+ * - Write ~/.arise/daemon.port
  * - Single-instance check via magic health response
  * - Graceful shutdown on SIGTERM/SIGINT
  */
@@ -44,8 +44,8 @@ const logger = createLogger("server");
 const APP_VERSION: string = JSON.parse(
   readFileSync(join(import.meta.dirname, "..", "package.json"), "utf-8"),
 ).version;
-const DAEMON_MAGIC = `ami-daemon-${APP_VERSION}`;
-const AMI_DIR = join(homedir(), ".ami");
+const DAEMON_MAGIC = `arise-daemon-${APP_VERSION}`;
+const AMI_DIR = join(homedir(), ".arise");
 const PORT_FILE = join(AMI_DIR, "daemon.port");
 const DEFAULT_PORT = 8765;
 const MAX_PORT_TRIES = 10;
@@ -183,7 +183,7 @@ function checkExistingDaemon(port: number): Promise<boolean> {
         res.on("end", () => {
           try {
             const json = JSON.parse(data);
-            resolve(json.magic?.startsWith("ami-daemon-") ?? false);
+            resolve(json.magic?.startsWith("arise-daemon-") ?? false);
           } catch {
             resolve(false);
           }
@@ -239,7 +239,7 @@ async function start(): Promise<void> {
   loadConfig();
 
   logger.info("=".repeat(60));
-  logger.info(`Starting Ami Daemon v${APP_VERSION} (TypeScript)...`);
+  logger.info(`Starting Arise Daemon v${APP_VERSION} (TypeScript)...`);
   logger.info("=".repeat(60));
 
   // Check for existing daemon via port file
@@ -285,7 +285,7 @@ async function start(): Promise<void> {
   writePortFile(port);
 
   logger.info("=".repeat(60));
-  logger.info(`Ami Daemon v${APP_VERSION} running on port ${port}`);
+  logger.info(`Arise Daemon v${APP_VERSION} running on port ${port}`);
   logger.info(`Health: http://127.0.0.1:${port}/api/v1/health`);
   if (BROWSER_CDP_PORT) {
     logger.info(`Browser CDP: ${BROWSER_CDP_PORT}`);

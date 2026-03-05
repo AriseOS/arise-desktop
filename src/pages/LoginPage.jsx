@@ -119,7 +119,7 @@ function LoginPage({ navigate, showStatus, onLoginSuccess, onLocalModeStart }) {
         {/* Logo and Title */}
         <div className="auth-header">
           <div className="auth-logo"><Icon icon="cpu" size={64} /></div>
-          <h1 className="auth-title">Ami</h1>
+          <h1 className="auth-title">Arise</h1>
           <p className="auth-subtitle">{t('auth.loginTitle')}</p>
         </div>
 

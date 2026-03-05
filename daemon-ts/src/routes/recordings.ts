@@ -15,7 +15,7 @@
 
 import { Router, type Request, type Response } from "express";
 import { getStorageManager } from "../services/storage-manager.js";
-import { BehaviorRecorder } from "amipilot";
+import { BehaviorRecorder } from "arise-browser";
 import { BrowserSession } from "../browser/browser-session.js";
 import { getCloudClient } from "../services/cloud-client.js";
 import { createLogger } from "../utils/logging.js";

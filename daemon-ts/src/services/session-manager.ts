@@ -3,7 +3,7 @@
  *
  * Ported from session_manager.py.
  *
- * - Each session is a JSONL file in ~/.ami/sessions/
+ * - Each session is a JSONL file in ~/.arise/sessions/
  * - Sessions timeout after 30 minutes of inactivity
  * - New sessions carry context (last 5 messages) from previous session
  * - Cursor-based cross-session history traversal
@@ -29,7 +29,7 @@ const logger = createLogger("session-manager");
 
 const SESSION_TIMEOUT_MINUTES = 30;
 const CONTEXT_MESSAGES_COUNT = 5;
-const SESSIONS_DIR = join(homedir(), ".ami", "sessions");
+const SESSIONS_DIR = join(homedir(), ".arise", "sessions");
 
 // ===== Helpers =====
 

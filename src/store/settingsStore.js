@@ -8,7 +8,7 @@
 import { createStore } from 'zustand/vanilla';
 
 // Storage key for persistence in electron-store
-const STORAGE_KEY = 'ami_settings';
+const STORAGE_KEY = 'arise_settings';
 
 // Save settings to electron-store (async, fire-and-forget)
 const saveSettings = (settings) => {

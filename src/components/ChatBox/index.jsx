@@ -131,7 +131,7 @@ function ChatBox({
   onRemoveQueuedMessage,
   isLoading = false,
   disabled = false,
-  placeholder = 'Ask Ami to automate your tasks',
+  placeholder = 'Ask Arise to automate your tasks',
   showWelcome = false,
 }) {
   // Local state for UI
@@ -222,7 +222,7 @@ function ChatBox({
     return (
       <div className="chat-box chat-box-welcome">
         <div className="welcome-content">
-          <h2 className="welcome-title">Welcome to Ami</h2>
+          <h2 className="welcome-title">Welcome to Arise</h2>
           <p className="welcome-subtitle">How can I help you today?</p>
         </div>
 

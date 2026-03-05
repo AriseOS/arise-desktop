@@ -12,7 +12,7 @@
         "helpHint": "If the problem persists, try restarting the application or check the log file."
     },
     "app": {
-        "welcome": "Welcome to Ami",
+        "welcome": "Welcome to Arise",
         "subtitle": "Let AI automate your repetitive work",
         "startFirstAutomation": "Start your first automation",
         "startRecording": "Start Recording",
@@ -468,7 +468,7 @@
         "loading": "Loading documentation..."
     },
     "setup": {
-        "title": "Welcome to Ami",
+        "title": "Welcome to Arise",
         "checking": "Checking browser installation...",
         "ready": "Found {{browser}}, ready to use!",
         "notFound": "No browser found. Please install Google Chrome or click below to install Chromium.",
@@ -719,14 +719,14 @@
         }
     },
     "loginWelcome": {
-        "title": "Welcome to Ami Browser",
-        "subtitle": "Log in to your accounts here, and let Ami do the rest",
+        "title": "Welcome to Arise Browser",
+        "subtitle": "Log in to your accounts here, and let Arise do the rest",
         "loginTitle": "This Is Your Tab",
-        "loginDesc": "This tab is yours. Log in to any website here — Ami will automatically use your cookies and sessions when it works on your behalf.",
-        "agentTitle": "Ami Creates Its Own Tabs",
-        "agentDesc": "When Ami runs a task, it opens new tabs to browse, click, fill forms, and extract data. You can watch it work in real time.",
+        "loginDesc": "This tab is yours. Log in to any website here — Arise will automatically use your cookies and sessions when it works on your behalf.",
+        "agentTitle": "Arise Creates Its Own Tabs",
+        "agentDesc": "When Arise runs a task, it opens new tabs to browse, click, fill forms, and extract data. You can watch it work in real time.",
         "memoryTitle": "Teach Once, Run Forever",
-        "memoryDesc": "Record a workflow once and Ami learns from it. Next time, just describe what you need — Ami replays and adapts your steps automatically.",
+        "memoryDesc": "Record a workflow once and Arise learns from it. Next time, just describe what you need — Arise replays and adapts your steps automatically.",
         "hint": "Enter a URL above to get started"
     },
     "integrationList": {

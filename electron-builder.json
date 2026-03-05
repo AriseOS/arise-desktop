@@ -1,6 +1,6 @@
 {
-  "appId": "com.arise.ami",
-  "productName": "Ami",
+  "appId": "com.arise.desktop",
+  "productName": "Arise",
   "publish": null,
   "directories": {
     "output": "release"

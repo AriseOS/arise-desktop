@@ -4,7 +4,7 @@
  * Ported from storage_manager.py.
  *
  * Directory structure:
- *   ~/.ami/users/{userId}/recordings/{sessionId}/
+ *   ~/.arise/users/{userId}/recordings/{sessionId}/
  *     recording.json    (metadata + operations)
  *     snapshots/
  *       {urlHash}.json  (page snapshots)
