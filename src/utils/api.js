@@ -427,6 +427,35 @@ export const api = {
   // (Chromium) is always running. No separate start/stop needed.
 
   /**
+   * Generate 5 site tasks from cloud and immediately execute them locally.
+   *
+   * @param {string[]} sites - Site URLs or domains
+   * @param {object} options - Execution options
+   * @param {boolean} options.continueOnError - Continue remaining tasks after a failure
+   * @returns {Promise<object>} Batch info with generated tasks and local quick-task IDs
+   */
+  async generateSiteTasksAndExecute(sites, options = {}) {
+    const { continueOnError = true } = options;
+    return await this.callAppBackend('/api/v1/site-tasks/generate-execute', {
+      method: 'POST',
+      body: JSON.stringify({
+        sites,
+        continue_on_error: continueOnError,
+      })
+    });
+  },
+
+  /**
+   * Get local batch status for generated site tasks.
+   *
+   * @param {string} batchId - Batch ID returned by generateSiteTasksAndExecute
+   * @returns {Promise<object>} Batch status
+   */
+  async getSiteTaskBatch(batchId) {
+    return await this.callAppBackend(`/api/v1/site-tasks/batches/${batchId}`);
+  },
+
+  /**
    * Start recording
    *
    * @param {string} url - Starting URL

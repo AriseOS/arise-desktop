@@ -20,6 +20,29 @@ export interface RequestCredentials {
   token?: string;  // JWT access token
 }
 
+export interface CloudSiteTaskItem {
+  title: string;
+  goal: string;
+  starting_url: string;
+  task_type: string;
+  rationale?: string | null;
+  confidence: number;
+}
+
+export interface CloudSiteTaskPlan {
+  site: string;
+  normalized_site: string;
+  domain: string;
+  site_summary: string;
+  tasks: CloudSiteTaskItem[];
+}
+
+export interface CloudSiteTasksGenerateResponse {
+  success: boolean;
+  generated_sites: number;
+  results: CloudSiteTaskPlan[];
+}
+
 export class CloudClient {
   private baseUrl: string;
   private timeout = 30_000;
@@ -203,6 +226,15 @@ export class CloudClient {
     return this.post(`/api/v1/recordings/${sessionId}/analyze`, {
       user_id: userId,
     }, creds);
+  }
+
+  // ===== Site Tasks =====
+
+  async generateSiteTasks(
+    body: { sites: string[] },
+    creds?: RequestCredentials,
+  ): Promise<CloudSiteTasksGenerateResponse> {
+    return this.post("/api/v1/admin/site-tasks/generate", body, creds) as Promise<CloudSiteTasksGenerateResponse>;
   }
 
   // ===== Intent Builder =====

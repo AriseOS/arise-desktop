@@ -32,6 +32,7 @@ import { intentBuilderRouter } from "./routes/intent-builder.js";
 import { sessionRouter } from "./routes/session.js";
 import { integrationsRouter } from "./routes/integrations.js";
 import { authRouter } from "./routes/auth.js";
+import { siteTasksRouter } from "./routes/site-tasks.js";
 import { loadConfig } from "./utils/config.js";
 import { getCloudClient } from "./services/cloud-client.js";
 
@@ -169,6 +170,7 @@ app.use("/api/v1/intent-builder", intentBuilderRouter);
 app.use("/api/v1/session", sessionRouter);
 app.use("/api/v1/integrations", integrationsRouter);
 app.use("/api/v1/auth", authRouter);
+app.use("/api/v1/site-tasks", siteTasksRouter);
 
 // ===== Port Discovery =====
 
