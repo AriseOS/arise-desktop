@@ -14,7 +14,7 @@
     "@mariozechner/pi-agent-core": "^0.52.12",
     "@mariozechner/pi-ai": "^0.52.12",
     "@sinclair/typebox": "^0.34.0",
-    "arise-browser": "file:../../arise-browser",
+    "arise-browser": "github:AriseOS/arise-browser",
     "cors": "^2.8.5",
     "docx": "^9.1.0",
     "exceljs": "^4.4.0",
